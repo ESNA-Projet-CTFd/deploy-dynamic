@@ -86,8 +86,9 @@ function get_docker_status(container) {
                                 <i class="fas fa-redo"></i> Restart Instance
                                 <span id="${instanceId}_countdown" class="docker-countdown-inline"></span>
                             </button>
-                            <button onclick="destroy_container('${escapedImage}');"
-                                    class="btn btn-sm btn-danger">
+                            <button id="${instanceId}_destroy_btn"
+                                    class="btn btn-sm btn-danger"
+                                    disabled>
                                 <i class="fas fa-trash-alt"></i> Destroy Instance
                             </button>
                         </div>
@@ -113,6 +114,9 @@ function get_docker_status(container) {
               .prop("disabled", false)
               .attr("onclick", "start_container('" + escapedImage + "');");
             CTFd.lib.$("#" + instanceId + "_countdown").html("");
+            CTFd.lib.$("#" + instanceId + "_destroy_btn")
+              .prop("disabled", false)
+              .attr("onclick", "destroy_container('" + escapedImage + "');");
           } else {
             CTFd.lib
               .$("#" + instanceId + "_countdown")
