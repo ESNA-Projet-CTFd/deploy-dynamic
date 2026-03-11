@@ -575,8 +575,8 @@ class ContainerAPI(Resource):
             check = DockerChallengeTracker.query.filter_by(user_id=session.id).filter_by(docker_image=container).first()
         
         # If this container is already created, we don't need another one.
-        if check != None and not (unix_time(datetime.utcnow()) - int(check.timestamp)) >= 100:
-            return abort(403,"To prevent abuse, dockers can be reverted and stopped after 5 minutes of creation.")
+        if check != None and not (unix_time(datetime.utcnow()) - int(check.timestamp)) >= 30:
+            return abort(403,"To prevent abuse, dockers can be reverted and stopped after 30 seconds of creation.")
         # Delete when requested
         elif check != None and request.args.get('stopcontainer'):
             delete_container(docker, check.instance_id)
@@ -609,7 +609,7 @@ class ContainerAPI(Resource):
             user_id=session.id if not is_teams_mode() else None,
             docker_image=container,
             timestamp=unix_time(datetime.utcnow()),
-            revert_time=unix_time(datetime.utcnow()) + 300,
+            revert_time=unix_time(datetime.utcnow()) + 30,
             instance_id=create[0]['Id'],
             ports=','.join([p[0]['HostPort'] for p in ports]),
             host=str(docker.hostname).split(':')[0],
