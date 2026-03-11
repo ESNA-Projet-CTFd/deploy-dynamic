@@ -1,0 +1,96 @@
+{% extends "challenge.html" %}
+{% block description %}
+{{ challenge.html }}
+<style>
+.docker-card {
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    margin: 1rem 0;
+}
+.docker-card-header {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+    color: #e0e0e0;
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.docker-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #28a745;
+    flex-shrink: 0;
+    animation: docker-pulse 1.8s infinite;
+}
+@keyframes docker-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(40,167,69,0.4); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(40,167,69,0); }
+}
+.docker-card-body {
+    padding: 0.9rem 1rem;
+    background: #f8f9fa;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.docker-conn-info {
+    font-family: 'Courier New', monospace;
+    font-size: 0.88rem;
+    background: #e9ecef;
+    border: 1px solid #ced4da;
+    padding: 0.4rem 0.75rem;
+    border-radius: 0.3rem;
+    color: #495057;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.docker-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.docker-countdown {
+    font-size: 0.8rem;
+    color: #6c757d;
+    flex: 1;
+    min-width: 120px;
+}
+.docker-start-wrap {
+    text-align: center;
+    padding: 0.5rem 0;
+}
+.docker-start-btn {
+    padding: 0.5rem 1.5rem;
+    font-size: 0.95rem;
+    border-radius: 0.4rem;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.docker-start-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+}
+</style>
+<div class='mb-3' id='docker_container' name='{{ challenge.docker_image | safe }}'>
+    <div class="text-center py-3 text-muted">
+        <i class="fas fa-circle-notch fa-spin"></i>
+    </div>
+</div>
+{% endblock %}
+{% block input %}
+<input id="challenge-id" class="challenge-id" type="hidden" value="{{ challenge.id }}">
+<input id="challenge-input" class="challenge-input form-control" type="text" name="submission" @keyup.enter="submitChallenge()" placeholder="Flag" x-model="submission">
+{% endblock %}
+{% block submit %}
+<button id="challenge-submit" class="challenge-submit btn btn-outline-secondary w-100 h-100" type="submit" @click.debounce.500ms="submitChallenge()">
+    Submit
+</button>
+{% endblock %}

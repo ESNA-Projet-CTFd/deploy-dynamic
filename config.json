@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Dynamic Deploy Configuration",
+    "route": "/admin/dynamic_deploy_config"
+  },
+  {
+    "name": "Running Instances",
+    "route": "/admin/docker_instances"
+  }
+]
