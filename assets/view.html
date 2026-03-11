@@ -39,18 +39,30 @@
     flex-direction: column;
     gap: 0.6rem;
 }
-.docker-conn-info {
+.docker-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.25rem;
+}
+.docker-link {
     font-family: 'Courier New', monospace;
     font-size: 0.88rem;
     background: #e9ecef;
     border: 1px solid #ced4da;
     padding: 0.4rem 0.75rem;
     border-radius: 0.3rem;
-    color: #495057;
-    display: flex;
+    color: #0d6efd;
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+    gap: 0.4rem;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+}
+.docker-link:hover {
+    background: #dee2e6;
+    color: #0a58ca;
+    text-decoration: none;
 }
 .docker-actions {
     display: flex;
@@ -58,11 +70,11 @@
     gap: 0.5rem;
     flex-wrap: wrap;
 }
-.docker-countdown {
-    font-size: 0.8rem;
-    color: #6c757d;
-    flex: 1;
-    min-width: 120px;
+.docker-countdown-inline {
+    font-size: 0.78rem;
+    font-weight: normal;
+    opacity: 0.75;
+    margin-left: 0.25rem;
 }
 .docker-start-wrap {
     text-align: center;
