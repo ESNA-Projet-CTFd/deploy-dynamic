@@ -35,7 +35,11 @@ from wtforms import (
 from wtforms.validators import DataRequired, ValidationError, InputRequired
 from werkzeug.utils import secure_filename
 import requests
+import socket as _socket
 import tempfile
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection
+from urllib3.connectionpool import HTTPConnectionPool
 from CTFd.utils.dates import unix_time
 from datetime import datetime
 import json
@@ -92,6 +96,65 @@ class DockerConfigForm(BaseForm):
     submit = SubmitField('Submit')
 
 
+class _UnixSocketConnection(HTTPConnection):
+    def __init__(self, socket_path):
+        super().__init__('localhost')
+        self.socket_path = socket_path
+
+    def connect(self):
+        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        sock.connect(self.socket_path)
+        self.sock = sock
+
+
+class _UnixSocketConnectionPool(HTTPConnectionPool):
+    def __init__(self, socket_path):
+        super().__init__('localhost')
+        self.socket_path = socket_path
+
+    def _new_conn(self):
+        return _UnixSocketConnection(self.socket_path)
+
+
+class _UnixSocketAdapter(HTTPAdapter):
+    def __init__(self, socket_path):
+        self.socket_path = socket_path
+        super().__init__()
+
+    def get_connection(self, url, proxies=None):
+        return _UnixSocketConnectionPool(self.socket_path)
+
+
+def _is_unix_socket(hostname):
+    return bool(hostname and hostname.startswith('unix://'))
+
+
+def _get_docker_session(docker):
+    """Return a requests.Session configured for TCP or Unix socket."""
+    s = requests.Session()
+    if _is_unix_socket(docker.hostname):
+        socket_path = docker.hostname[len('unix://'):]
+        adapter = _UnixSocketAdapter(socket_path)
+        s.mount('http://', adapter)
+        s.mount('https://', adapter)
+    return s
+
+
+def _get_docker_base_url(docker):
+    """Return the base URL for the Docker API (http://localhost for Unix sockets)."""
+    if _is_unix_socket(docker.hostname):
+        return 'http://localhost'
+    prefix = 'https' if docker.tls_enabled else 'http'
+    return f'{prefix}://{docker.hostname}'
+
+
+def _get_tracker_host(docker):
+    """Return the host string to store in DockerChallengeTracker."""
+    if _is_unix_socket(docker.hostname):
+        return 'localhost'
+    return str(docker.hostname).split(':')[0]
+
+
 def get_random_docker():
     """Return a random DockerConfig from all configured servers."""
     configs = DockerConfig.query.all()
@@ -103,7 +166,11 @@ def get_random_docker():
 def get_docker_by_host(host):
     """Find DockerConfig whose hostname matches the given host (IP/name without port)."""
     for c in DockerConfig.query.all():
-        if c.hostname and c.hostname.split(':')[0] == host:
+        if not c.hostname:
+            continue
+        if _is_unix_socket(c.hostname) and host == 'localhost':
+            return c
+        if not _is_unix_socket(c.hostname) and c.hostname.split(':')[0] == host:
             return c
     return DockerConfig.query.first()
 
@@ -237,26 +304,24 @@ class KillContainerAPI(Resource):
 
 
 def do_request(docker, url, headers=None, method='GET'):
-    tls = docker.tls_enabled
-    prefix = 'https' if tls else 'http'
-    host = docker.hostname
-    URL_TEMPLATE = '%s://%s' % (prefix, host)
+    base = _get_docker_base_url(docker)
+    req_session = _get_docker_session(docker)
+    tls = docker.tls_enabled and not _is_unix_socket(docker.hostname)
     try:
         if tls:
             cert, verify = get_client_cert(docker)
-            if (method == 'GET'):
-                r = requests.get(url=f"%s{url}" % URL_TEMPLATE, cert=cert, verify=verify, headers=headers)
-            elif (method == 'DELETE'):
-                r = requests.delete(url=f"%s{url}" % URL_TEMPLATE, cert=cert, verify=verify, headers=headers)
-            # Clean up the cert files:
+            if method == 'GET':
+                r = req_session.get(f"{base}{url}", cert=cert, verify=verify, headers=headers)
+            elif method == 'DELETE':
+                r = req_session.delete(f"{base}{url}", cert=cert, verify=verify, headers=headers)
             for file_path in [*cert, verify]:
                 if file_path:
                     Path(file_path).unlink(missing_ok=True)
         else:
-            if (method == 'GET'):
-                r = requests.get(url=f"%s{url}" % URL_TEMPLATE, headers=headers)
-            elif (method == 'DELETE'):
-                r = requests.delete(url=f"%s{url}" % URL_TEMPLATE, headers=headers)
+            if method == 'GET':
+                r = req_session.get(f"{base}{url}", headers=headers)
+            elif method == 'DELETE':
+                r = req_session.delete(f"{base}{url}", headers=headers)
     except:
         traceback.print_exc()
         r = []
@@ -320,14 +385,9 @@ def get_required_ports(docker, image):
 
 
 def create_container(docker, image, team, portbl):
-    tls = docker.tls_enabled
-    CERT = None
-    if not tls:
-        prefix = 'http'
-    else:
-        prefix = 'https'
-    host = docker.hostname
-    URL_TEMPLATE = '%s://%s' % (prefix, host)
+    base = _get_docker_base_url(docker)
+    req_session = _get_docker_session(docker)
+    tls = docker.tls_enabled and not _is_unix_socket(docker.hostname)
     needed_ports = get_required_ports(docker, image)
     team = hashlib.md5(team.encode("utf-8")).hexdigest()[:10]
     container_name = "%s_%s" % (image.split(':')[1], team)
@@ -348,24 +408,19 @@ def create_container(docker, image, team, portbl):
     data = json.dumps({"Image": image, "ExposedPorts": ports, "HostConfig": {"PortBindings": bindings}})
     if tls:
         cert, verify = get_client_cert(docker)
-        r = requests.post(url="%s/containers/create?name=%s" % (URL_TEMPLATE, container_name), cert=cert,
-                      verify=verify, data=data, headers=headers)
+        r = req_session.post(f"{base}/containers/create?name={container_name}",
+                             cert=cert, verify=verify, data=data, headers=headers)
         result = r.json()
-        s = requests.post(url="%s/containers/%s/start" % (URL_TEMPLATE, result['Id']), cert=cert, verify=verify,
-                          headers=headers)
-        # Clean up the cert files:
+        req_session.post(f"{base}/containers/{result['Id']}/start",
+                         cert=cert, verify=verify, headers=headers)
         for file_path in [*cert, verify]:
             if file_path:
                 Path(file_path).unlink(missing_ok=True)
-
     else:
-        r = requests.post(url="%s/containers/create?name=%s" % (URL_TEMPLATE, container_name),
-                          data=data, headers=headers)
-        print(r.request.method, r.request.url, r.request.body)
+        r = req_session.post(f"{base}/containers/create?name={container_name}",
+                             data=data, headers=headers)
         result = r.json()
-        print(result)
-        # name conflicts are not handled properly
-        s = requests.post(url="%s/containers/%s/start" % (URL_TEMPLATE, result['Id']), headers=headers)
+        req_session.post(f"{base}/containers/{result['Id']}/start", headers=headers)
     return result, data
 
 
@@ -637,7 +692,7 @@ class ContainerAPI(Resource):
             revert_time=unix_time(datetime.utcnow()) + 30,
             instance_id=create[0]['Id'],
             ports=','.join([p[0]['HostPort'] for p in ports]),
-            host=str(docker.hostname).split(':')[0],
+            host=_get_tracker_host(docker),
             challenge=challenge
         )
         db.session.add(entry)

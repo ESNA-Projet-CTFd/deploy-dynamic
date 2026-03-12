@@ -28,7 +28,7 @@
                 <tbody>
                     {% for s in servers %}
                     <tr {% if edit_server and edit_server.id == s.id %}class="table-info"{% endif %}>
-                        <td>{{ s.name or '<em class="text-muted">—</em>' }}</td>
+                        <td>{% if s.name %}{{ s.name }}{% else %}<em class="text-muted">—</em>{% endif %}</td>
                         <td><code>{{ s.hostname }}</code></td>
                         <td>
                             {% if s.tls_enabled %}
