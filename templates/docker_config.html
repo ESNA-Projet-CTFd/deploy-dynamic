@@ -2,99 +2,177 @@
 {% block content %}
 <div class="jumbotron">
     <div class="container">
-        <h1>Docker Config</h1>
+        <h1>Docker Servers Configuration</h1>
     </div>
 </div>
 <div class="container">
+
+    <!-- Server List -->
+    <div class="row mb-4">
+        <div class="col-md-10 offset-md-1">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h3>Configured Servers</h3>
+                <a href="{{ url_for('admin_docker_config.docker_config') }}" class="btn btn-success btn-sm">+ Add Server</a>
+            </div>
+            {% if servers %}
+            <table class="table table-striped table-bordered">
+                <thead class="thead-dark">
+                    <tr>
+                        <th>Name</th>
+                        <th>Hostname</th>
+                        <th>TLS</th>
+                        <th>Repositories</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in servers %}
+                    <tr {% if edit_server and edit_server.id == s.id %}class="table-info"{% endif %}>
+                        <td>{{ s.name or '<em class="text-muted">—</em>' }}</td>
+                        <td><code>{{ s.hostname }}</code></td>
+                        <td>
+                            {% if s.tls_enabled %}
+                            <span class="badge badge-success">Yes</span>
+                            {% else %}
+                            <span class="badge badge-secondary">No</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if s.repositories %}
+                            <small>{{ s.repositories }}</small>
+                            {% else %}
+                            <em class="text-muted">none selected</em>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="?edit={{ s.id }}" class="btn btn-sm btn-info">Edit</a>
+                            <form method="post" style="display:inline" onsubmit="return confirm('Delete server {{ s.hostname }}?')">
+                                {{ form.nonce() }}
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="server_id" value="{{ s.id }}">
+                                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="text-muted">No servers configured yet. Add one below.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Add / Edit Form -->
     <div class="row">
         <div class="col-md-6 offset-md-3">
-            {% for error in errors %}
-            <div class="alert alert-danger alert-dismissable" role="alert">
-                <span class="sr-only">Error:</span>
-                {{ error }}
-                <button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">×</span></button>
-            </div>
-            {% endfor %}
-            <form method="post" accept-charset="utf-8" autocomplete="off" role="form" name='docker_config' class="form-horizontal" enctype="multipart/form-data">
+            <h3>{% if edit_server %}Edit Server: <code>{{ edit_server.hostname }}</code>{% else %}Add New Server{% endif %}</h3>
+            <form method="post" accept-charset="utf-8" autocomplete="off" role="form"
+                  name="docker_config" class="form-horizontal" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="save">
+                <input type="hidden" name="server_id" value="{% if edit_server %}{{ edit_server.id }}{% endif %}">
+
                 <div class="form-group">
-                    <label for="hostname-input">
-                        Hostname
-                    </label>
-                    {% if config.hostname %}
-                    <input class="form-control" type="text" name="hostname" id="hostname-input" placeholder="Ex: 10.10.10.10:2376" value='{{ config.hostname }}'/>
-                    {% else %}
-                    <input class="form-control" type="text" name="hostname" id="hostname-input" placeholder="Ex: 10.10.10.10:2376" />
-                    {% endif %}
+                    <label for="name-input">Server Name <small class="text-muted">(optional label)</small></label>
+                    <input class="form-control" type="text" name="name" id="name-input"
+                           placeholder="Ex: Server 1"
+                           value="{{ edit_server.name if edit_server and edit_server.name else '' }}"/>
                 </div>
+
+                <div class="form-group">
+                    <label for="hostname-input">Hostname</label>
+                    <input class="form-control" type="text" name="hostname" id="hostname-input"
+                           placeholder="Ex: 10.10.10.10:2376"
+                           value="{{ edit_server.hostname if edit_server and edit_server.hostname else '' }}"/>
+                </div>
+
                 <div class="form-group">
                     <p>TLS Enabled?</p>
-                    <input type="radio" name="tls_enabled" id="tls-radiobox-no" value="False" onclick="enable_file_form(!this.checked)" {% if not config.tls_enabled %}checked{% endif %} />
+                    <input type="radio" name="tls_enabled" id="tls-radiobox-no" value="False"
+                           onclick="enable_file_form(!this.checked)"
+                           {% if not edit_server or not edit_server.tls_enabled %}checked{% endif %} />
                     <label for="tls-radiobox-no">No</label>
-                    <input type="radio" name="tls_enabled" id="tls-radiobox-yes" value="True" onclick="enable_file_form(this.checked)"{% if config.tls_enabled %}checked{% endif %} />
+                    &nbsp;
+                    <input type="radio" name="tls_enabled" id="tls-radiobox-yes" value="True"
+                           onclick="enable_file_form(this.checked)"
+                           {% if edit_server and edit_server.tls_enabled %}checked{% endif %} />
                     <label for="tls-radiobox-yes">Yes</label>
                 </div>
+
                 <div class="form-group">
-                    <label for="ca-file">
-                        CA Cert {% if config.ca_cert %} (Uploaded. Adding a new file will overwrite.) {% endif %}
-                    </label>
-                    <input class="form-control" type="file" name="ca_cert" id="ca_file" {% if not config.tls_enabled %} disabled {% endif %} {% if config.tls_enabled and not config.ca_cert %} required {% endif %} />
-                </div>
-                <div class="form-group">
-                    <label for="client-file">
-                        Client Cert {% if config.client_cert %} (Uploaded. Adding a new file will overwrite.) {% endif %}
-                    </label>
-                    <input class="form-control" type="file" name="client_cert" id="client_file" {% if not config.tls_enabled %} disabled {% endif %} {% if config.tls_enabled and not config.client_cert %} required {% endif %} />
-                </div>
-                <div class="form-group">
-                    <label for="key-file">
-                        Client Key {% if config.client_key %} (Uploaded. Adding a new file will overwrite.) {% endif %}
-                    </label>
-                    <input class="form-control" type="file" name="client_key" id="key_file" {% if not config.tls_enabled %} disabled {% endif %} {% if config.tls_enabled and not config.client_key %} required {% endif %} />
-                </div>
-                <div class="form-group">
-                    <label for="repo-ms">
-                        Repositories
-                    </label>
-                    <select id='repositories' name="repositories" class='form-control' size='10' multiple>
-                        {% if form.repositories.choices[0][0] == "ERROR" %}
-                            <option value='False' disabled>{{ form.repositories.choices[0][1] }}</option>
-                        {% elif form.repositories %}
-                            {% for key,value in form.repositories.choices %}
-                                {% if key in repos %}
-                                <option value='{{ key }}' selected>{{ value }}</option>
-                                {% else %}
-                                <option value='{{ key }}'>{{ value }}</option>
-                                {% endif %}
-                            {% endfor %}
-                        {% else %}
-                            <option value='False' disabled>Connect Docker API First</option>
+                    <label for="ca_cert">
+                        CA Cert
+                        {% if edit_server and edit_server.ca_cert %}
+                        <small class="text-success">(uploaded — new file will overwrite)</small>
                         {% endif %}
+                    </label>
+                    <input class="form-control" type="file" name="ca_cert" id="ca_cert"
+                           {% if not edit_server or not edit_server.tls_enabled %}disabled{% endif %} />
+                </div>
+
+                <div class="form-group">
+                    <label for="client_cert">
+                        Client Cert
+                        {% if edit_server and edit_server.client_cert %}
+                        <small class="text-success">(uploaded — new file will overwrite)</small>
+                        {% endif %}
+                    </label>
+                    <input class="form-control" type="file" name="client_cert" id="client_cert"
+                           {% if not edit_server or not edit_server.tls_enabled %}disabled{% endif %} />
+                </div>
+
+                <div class="form-group">
+                    <label for="client_key">
+                        Client Key
+                        {% if edit_server and edit_server.client_key %}
+                        <small class="text-success">(uploaded — new file will overwrite)</small>
+                        {% endif %}
+                    </label>
+                    <input class="form-control" type="file" name="client_key" id="client_key"
+                           {% if not edit_server or not edit_server.tls_enabled %}disabled{% endif %} />
+                </div>
+
+                <div class="form-group">
+                    <label for="repositories">Repositories</label>
+                    {% if not edit_server %}
+                    <select class="form-control" size="4" disabled>
+                        <option>Save the server first, then edit it to select repositories.</option>
                     </select>
+                    {% elif form.repositories.choices and form.repositories.choices[0][0] == "ERROR" %}
+                    <select class="form-control" size="4" disabled>
+                        <option>{{ form.repositories.choices[0][1] }}</option>
+                    </select>
+                    {% else %}
+                    <select id="repositories" name="repositories" class="form-control" size="10" multiple>
+                        {% for key, value in form.repositories.choices %}
+                        <option value="{{ key }}" {% if key in selected_repos %}selected{% endif %}>{{ value }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple.</small>
+                    {% endif %}
                 </div>
+
                 {{ form.nonce() }}
-                <div class="col-md-13 text-center">
-                    <button type="submit" tabindex="0" class="btn btn-md btn-primary btn-outlined">
-                        Submit
+                <div class="text-center mb-4">
+                    <button type="submit" class="btn btn-primary">
+                        {% if edit_server %}Update Server{% else %}Add Server{% endif %}
                     </button>
+                    {% if edit_server %}
+                    <a href="{{ url_for('admin_docker_config.docker_config') }}" class="btn btn-secondary ml-2">Cancel</a>
+                    {% endif %}
                 </div>
+            </form>
         </div>
-        <input type="hidden" name="id" value="1">
-        </form>
     </div>
 </div>
 {% endblock content %}
 {% block scripts %}
 <script>
-
-function enable_file_form(status) {
-    status=!status; 
-    document.docker_config.ca_file.disabled = status;
-    document.docker_config.client_file.disabled = status;
-    document.docker_config.key_file.disabled = status;
-    document.docker_config.ca_file.required = !status;
-    document.docker_config.client_file.required = !status;
-    document.docker_config.key_file.required = !status;
+function enable_file_form(enabled) {
+    var disabled = !enabled;
+    document.getElementById('ca_cert').disabled = disabled;
+    document.getElementById('client_cert').disabled = disabled;
+    document.getElementById('client_key').disabled = disabled;
 }
-
 </script>
 {% endblock scripts %}

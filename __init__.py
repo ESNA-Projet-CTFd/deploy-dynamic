@@ -55,6 +55,7 @@ class DockerConfig(db.Model):
 	Docker Config Model. This model stores the config for docker API connections.
 	"""
     id = db.Column(db.Integer, primary_key=True)
+    name = db.Column("name", db.String(128), index=True)
     hostname = db.Column("hostname", db.String(64), index=True)
     tls_enabled = db.Column("tls_enabled", db.Boolean, default=False, index=True)
     ca_cert = db.Column("ca_cert", db.String(2200), index=True)
@@ -91,6 +92,22 @@ class DockerConfigForm(BaseForm):
     submit = SubmitField('Submit')
 
 
+def get_random_docker():
+    """Return a random DockerConfig from all configured servers."""
+    configs = DockerConfig.query.all()
+    if not configs:
+        return None
+    return random.choice(configs)
+
+
+def get_docker_by_host(host):
+    """Find DockerConfig whose hostname matches the given host (IP/name without port)."""
+    for c in DockerConfig.query.all():
+        if c.hostname and c.hostname.split(':')[0] == host:
+            return c
+    return DockerConfig.query.first()
+
+
 def define_docker_admin(app):
     admin_docker_config = Blueprint('admin_docker_config', __name__, template_folder='templates',
                                     static_folder='assets')
@@ -98,37 +115,39 @@ def define_docker_admin(app):
     @admin_docker_config.route("/admin/dynamic_deploy_config", methods=["GET", "POST"])
     @admins_only
     def docker_config():
-        docker = DockerConfig.query.filter_by(id=1).first()
         form = DockerConfigForm()
         if request.method == "POST":
-            if docker:
-                b = docker
-            else:
-                b = DockerConfig()
+            action = request.form.get('action', 'save')
+            server_id = request.form.get('server_id', '').strip()
+
+            if action == 'delete':
+                if server_id:
+                    DockerConfig.query.filter_by(id=int(server_id)).delete()
+                    db.session.commit()
+                return redirect(url_for('admin_docker_config.docker_config'))
+
+            b = DockerConfig.query.filter_by(id=int(server_id)).first() if server_id else DockerConfig()
             try:
                 ca_cert = request.files['ca_cert'].stream.read()
             except:
-                traceback.print_exc()
-                ca_cert = ''
+                ca_cert = b""
             try:
                 client_cert = request.files['client_cert'].stream.read()
             except:
-                traceback.print_exc()
-                client_cert = ''
+                client_cert = b""
             try:
                 client_key = request.files['client_key'].stream.read()
             except:
-                traceback.print_exc()
-                client_key = ''
-            if len(ca_cert) != 0: b.ca_cert = ca_cert
-            if len(client_cert) != 0: b.client_cert = client_cert
-            if len(client_key) != 0: b.client_key = client_key
+                client_key = b""
+            if ca_cert:
+                b.ca_cert = ca_cert
+            if client_cert:
+                b.client_cert = client_cert
+            if client_key:
+                b.client_key = client_key
+            b.name = request.form.get('name', '').strip()
             b.hostname = request.form['hostname']
-            b.tls_enabled = request.form['tls_enabled']
-            if b.tls_enabled == "True":
-                b.tls_enabled = True
-            else:
-                b.tls_enabled = False
+            b.tls_enabled = request.form.get('tls_enabled') == 'True'
             if not b.tls_enabled:
                 b.ca_cert = None
                 b.client_cert = None
@@ -136,30 +155,34 @@ def define_docker_admin(app):
             try:
                 b.repositories = ','.join(request.form.to_dict(flat=False)['repositories'])
             except:
-                traceback.print_exc()
                 b.repositories = None
             db.session.add(b)
             db.session.commit()
-            docker = DockerConfig.query.filter_by(id=1).first()
-        try:
-            repos = get_repositories(docker)
-        except:
-            traceback.print_exc()
-            repos = list()
-        if len(repos) == 0:
-            form.repositories.choices = [("ERROR", "Failed to Connect to Docker")]
+            new_id = b.id
+            if not server_id:
+                return redirect(url_for('admin_docker_config.docker_config') + f'?edit={new_id}')
+            return redirect(url_for('admin_docker_config.docker_config'))
+
+        all_servers = DockerConfig.query.all()
+        edit_id = request.args.get('edit', '').strip()
+        edit_server = None
+        selected_repos = []
+        if edit_id:
+            edit_server = DockerConfig.query.filter_by(id=int(edit_id)).first()
+            if edit_server:
+                try:
+                    repos = get_repositories(edit_server)
+                except:
+                    repos = []
+                if len(repos) == 0:
+                    form.repositories.choices = [("ERROR", "Failed to Connect to Docker")]
+                else:
+                    form.repositories.choices = [(d, d) for d in repos]
+                selected_repos = edit_server.repositories.split(',') if edit_server.repositories else []
         else:
-            form.repositories.choices = [(d, d) for d in repos]
-        dconfig = DockerConfig.query.first()
-        try:
-            selected_repos = dconfig.repositories
-            if selected_repos == None:
-                selected_repos = list()
-        # selected_repos = dconfig.repositories.split(',')
-        except:
-            traceback.print_exc()
-            selected_repos = []
-        return render_template("docker_config.html", config=dconfig, form=form, repos=selected_repos)
+            form.repositories.choices = []
+        return render_template("docker_config.html", servers=all_servers, form=form,
+                               edit_server=edit_server, selected_repos=selected_repos)
 
     app.register_blueprint(admin_docker_config)
 
@@ -195,16 +218,16 @@ class KillContainerAPI(Resource):
     def get(self):
         container = request.args.get('container')
         full = request.args.get('all')
-        docker_config = DockerConfig.query.filter_by(id=1).first()
         docker_tracker = DockerChallengeTracker.query.all()
         if full == "true":
             for c in docker_tracker:
-                delete_container(docker_config, c.instance_id)
+                delete_container(get_docker_by_host(c.host), c.instance_id)
                 DockerChallengeTracker.query.filter_by(instance_id=c.instance_id).delete()
                 db.session.commit()
 
         elif container != 'null' and container in [c.instance_id for c in docker_tracker]:
-            delete_container(docker_config, container)
+            tracker_entry = DockerChallengeTracker.query.filter_by(instance_id=container).first()
+            delete_container(get_docker_by_host(tracker_entry.host), container)
             DockerChallengeTracker.query.filter_by(instance_id=container).delete()
             db.session.commit()
 
@@ -483,7 +506,6 @@ class DockerChallengeType(BaseChallenge):
 		"""
         data = request.form or request.get_json()
         submission = data["submission"].strip()
-        docker = DockerConfig.query.filter_by(id=1).first()
         try:
             if is_teams_mode():
                 docker_containers = DockerChallengeTracker.query.filter_by(
@@ -491,7 +513,7 @@ class DockerChallengeType(BaseChallenge):
             else:
                 docker_containers = DockerChallengeTracker.query.filter_by(
                     docker_image=challenge.docker_image).filter_by(user_id=user.id).first()
-            delete_container(docker, docker_containers.instance_id)
+            delete_container(get_docker_by_host(docker_containers.host), docker_containers.instance_id)
             DockerChallengeTracker.query.filter_by(instance_id=docker_containers.instance_id).delete()
         except:
             pass
@@ -553,7 +575,9 @@ class ContainerAPI(Resource):
         if not challenge:
             return abort(403, "No challenge name specified")
         
-        docker = DockerConfig.query.filter_by(id=1).first()
+        docker = get_random_docker()
+        if docker is None:
+            return abort(500, "No Docker server configured.")
         containers = DockerChallengeTracker.query.all()
         if container not in get_repositories(docker, tags=True):
             return abort(403,f"Container {container} not present in the repository.")
@@ -562,7 +586,7 @@ class ContainerAPI(Resource):
             # First we'll delete all old docker containers (+2 hours)
             for i in containers:
                 if int(session.id) == int(i.team_id) and (unix_time(datetime.utcnow()) - int(i.timestamp)) >= 7200:
-                    delete_container(docker, i.instance_id)
+                    delete_container(get_docker_by_host(i.host), i.instance_id)
                     DockerChallengeTracker.query.filter_by(instance_id=i.instance_id).delete()
                     db.session.commit()
             check = DockerChallengeTracker.query.filter_by(team_id=session.id).filter_by(docker_image=container).first()
@@ -570,17 +594,17 @@ class ContainerAPI(Resource):
             session = get_current_user()
             for i in containers:
                 if int(session.id) == int(i.user_id) and (unix_time(datetime.utcnow()) - int(i.timestamp)) >= 7200:
-                    delete_container(docker, i.instance_id)
+                    delete_container(get_docker_by_host(i.host), i.instance_id)
                     DockerChallengeTracker.query.filter_by(instance_id=i.instance_id).delete()
                     db.session.commit()
             check = DockerChallengeTracker.query.filter_by(user_id=session.id).filter_by(docker_image=container).first()
-        
+
         # If this container is already created, we don't need another one.
         if check != None and not (unix_time(datetime.utcnow()) - int(check.timestamp)) >= 30:
             return abort(403,"To prevent abuse, dockers can be reverted and stopped after 30 seconds of creation.")
         # Delete when requested
         elif check != None and request.args.get('stopcontainer'):
-            delete_container(docker, check.instance_id)
+            delete_container(get_docker_by_host(check.host), check.instance_id)
             if is_teams_mode():
                 DockerChallengeTracker.query.filter_by(team_id=session.id).filter_by(docker_image=container).delete()
             else:
@@ -589,13 +613,13 @@ class ContainerAPI(Resource):
             return {"result": "Container stopped"}
         # The exception would be if we are reverting a box. So we'll delete it if it exists and has been around for more than 5 minutes.
         elif check != None:
-            delete_container(docker, check.instance_id)
+            delete_container(get_docker_by_host(check.host), check.instance_id)
             if is_teams_mode():
                 DockerChallengeTracker.query.filter_by(team_id=session.id).filter_by(docker_image=container).delete()
             else:
                 DockerChallengeTracker.query.filter_by(user_id=session.id).filter_by(docker_image=container).delete()
             db.session.commit()
-        
+
         # Check if a container is already running for this user. We need to recheck the DB first
         containers = DockerChallengeTracker.query.all()
         for i in containers:
@@ -634,7 +658,6 @@ class DockerStatus(Resource):
 
     @authed_only
     def get(self):
-        docker = DockerConfig.query.filter_by(id=1).first()
         if is_teams_mode():
             session = get_current_team()
             tracker = DockerChallengeTracker.query.filter_by(team_id=session.id)
@@ -652,7 +675,7 @@ class DockerStatus(Resource):
                 'revert_time': i.revert_time,
                 'instance_id': i.instance_id,
                 'ports': i.ports.split(','),
-                'host': str(docker.hostname).split(':')[0]
+                'host': i.host
             })
         return {
             'success': True,
@@ -672,25 +695,24 @@ class DockerAPI(Resource):
 
     @admins_only
     def get(self):
-        docker = DockerConfig.query.filter_by(id=1).first()
-        images = get_repositories(docker, tags=True, repos=docker.repositories)
+        all_dockers = DockerConfig.query.all()
+        images = set()
+        for docker in all_dockers:
+            repos = docker.repositories.split(',') if docker.repositories else None
+            try:
+                images.update(get_repositories(docker, tags=True, repos=repos))
+            except Exception:
+                pass
         if images:
-            data = list()
-            for i in images:
-                data.append({'name': i})
             return {
                 'success': True,
-                'data': data
+                'data': [{'name': i} for i in sorted(images)]
             }
         else:
             return {
-                       'success': False,
-                       'data': [
-                           {
-                               'name': 'Error in Docker Config!'
-                           }
-                       ]
-                   }, 400
+                'success': False,
+                'data': [{'name': 'Error in Docker Config!'}]
+            }, 400
 
 
 
