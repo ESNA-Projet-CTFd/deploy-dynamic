@@ -37,9 +37,11 @@ from werkzeug.utils import secure_filename
 import requests
 import socket as _socket
 import tempfile
+import http.client
+from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
-from urllib3.connection import HTTPConnection
-from urllib3.connectionpool import HTTPConnectionPool
+from requests.models import Response
+from requests.structures import CaseInsensitiveDict
 from CTFd.utils.dates import unix_time
 from datetime import datetime
 import json
@@ -96,33 +98,36 @@ class DockerConfigForm(BaseForm):
     submit = SubmitField('Submit')
 
 
-class _UnixSocketConnection(HTTPConnection):
-    def __init__(self, socket_path):
-        super().__init__('localhost')
-        self.socket_path = socket_path
-
-    def connect(self):
-        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-        sock.connect(self.socket_path)
-        self.sock = sock
-
-
-class _UnixSocketConnectionPool(HTTPConnectionPool):
-    def __init__(self, socket_path):
-        super().__init__('localhost')
-        self.socket_path = socket_path
-
-    def _new_conn(self):
-        return _UnixSocketConnection(self.socket_path)
-
-
 class _UnixSocketAdapter(HTTPAdapter):
+    """Requests adapter that routes HTTP traffic through a Unix domain socket."""
+
     def __init__(self, socket_path):
         self.socket_path = socket_path
         super().__init__()
 
-    def get_connection(self, url, proxies=None):
-        return _UnixSocketConnectionPool(self.socket_path)
+    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+        parsed = urlparse(request.url)
+        path = parsed.path or '/'
+        if parsed.query:
+            path += '?' + parsed.query
+
+        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        sock.connect(self.socket_path)
+        conn = http.client.HTTPConnection('localhost')
+        conn.sock = sock
+        conn.request(request.method, path,
+                     body=request.body,
+                     headers=dict(request.headers))
+        resp = conn.getresponse()
+
+        response = Response()
+        response.status_code = resp.status
+        response.headers = CaseInsensitiveDict(dict(resp.getheaders()))
+        response._content = resp.read()
+        response.encoding = 'utf-8'
+        response.url = request.url
+        response.request = request
+        return response
 
 
 def _is_unix_socket(hostname):
