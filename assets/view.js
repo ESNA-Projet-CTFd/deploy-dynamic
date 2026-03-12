@@ -84,13 +84,13 @@ function get_docker_status(container) {
                                     class="btn btn-sm btn-warning"
                                     disabled>
                                 <i class="fas fa-redo"></i> Restart Instance
-                                <span id="${instanceId}_countdown" class="docker-countdown-inline"></span>
+                                <span id="${instanceId}_restart_countdown" class="docker-countdown-inline"></span>
                             </button>
                             <button id="${instanceId}_destroy_btn"
                                     class="btn btn-sm btn-danger"
                                     disabled>
                                 <i class="fas fa-trash-alt"></i> Destroy Instance
-                                <span id="${instanceId}_countdown" class="docker-countdown-inline"></span>
+                                <span id="${instanceId}_destroy_countdown" class="docker-countdown-inline"></span>
                             </button>
                         </div>
                     </div>
@@ -110,19 +110,17 @@ function get_docker_status(container) {
 
           if (distance < 0) {
             clearInterval(x);
-            var $btn = CTFd.lib.$("#" + instanceId + "_restart_btn");
-            $btn
+            CTFd.lib.$("#" + instanceId + "_restart_btn")
               .prop("disabled", false)
               .attr("onclick", "start_container('" + escapedImage + "');");
-            CTFd.lib.$("#" + instanceId + "_countdown").html("");
-            CTFd.lib
-              .$("#" + instanceId + "_destroy_btn")
+            CTFd.lib.$("#" + instanceId + "_restart_countdown").html("");
+            CTFd.lib.$("#" + instanceId + "_destroy_btn")
               .prop("disabled", false)
               .attr("onclick", "destroy_container('" + escapedImage + "');");
+            CTFd.lib.$("#" + instanceId + "_destroy_countdown").html("");
           } else {
-            CTFd.lib
-              .$("#" + instanceId + "_countdown")
-              .html(minutes + ":" + seconds);
+            CTFd.lib.$("#" + instanceId + "_restart_countdown").html(minutes + ":" + seconds);
+            CTFd.lib.$("#" + instanceId + "_destroy_countdown").html(minutes + ":" + seconds);
           }
         }, 1000);
       });
