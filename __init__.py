@@ -606,7 +606,7 @@ class ContainerAPI(Resource):
             revert_time=unix_time(datetime.utcnow()) + 30,
             instance_id=create[0]['Id'],
             ports=','.join([p[0]['HostPort'] for p in ports]),
-            host=_get_host_key(docker),
+            host=docker.hostname,
             challenge=challenge
         )
         db.session.add(entry)
