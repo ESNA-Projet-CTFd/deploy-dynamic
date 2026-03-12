@@ -173,13 +173,14 @@ def define_docker_status(app):
     def docker_admin():
         docker_config = DockerConfig.query.filter_by(id=1).first()
         docker_tracker = DockerChallengeTracker.query.all()
-        for i in docker_tracker:
-            if is_teams_mode():
-                name = Teams.query.filter_by(id=i.team_id).first()
-                i.team_id = name.name
-            else:
-                name = Users.query.filter_by(id=i.user_id).first()
-                i.user_id = name.name
+        with db.session.no_autoflush:
+            for i in docker_tracker:
+                if is_teams_mode():
+                    name = Teams.query.filter_by(id=i.team_id).first()
+                    i.team_id = name.name if name else i.team_id
+                else:
+                    name = Users.query.filter_by(id=i.user_id).first()
+                    i.user_id = name.name if name else i.user_id
         return render_template("admin_docker_status.html", dockers=docker_tracker)
 
     app.register_blueprint(admin_docker_status)
