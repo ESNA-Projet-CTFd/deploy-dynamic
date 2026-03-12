@@ -104,6 +104,11 @@ def get_random_docker():
 def get_docker_client(config):
     """Create a DockerClient from a DockerConfig. Supports unix://, tcp://, and TLS."""
     host = config.hostname or ''
+    # Normalize unix socket: /var/run/docker.sock or unix://... → unix:///...
+    if host.startswith('/'):
+        host = f'unix://{host}'
+    if host.startswith('unix://') and not host.startswith('unix:///'):
+        host = 'unix:///' + host[len('unix://'):]
     if not host.startswith(('unix://', 'tcp://')):
         host = f'tcp://{host}'
     if config.tls_enabled:
@@ -203,7 +208,8 @@ def define_docker_admin(app):
             if edit_server:
                 try:
                     repos = get_repositories(edit_server)
-                except:
+                except Exception:
+                    traceback.print_exc()
                     repos = []
                 if len(repos) == 0:
                     form.repositories.choices = [("ERROR", "Failed to Connect to Docker")]
