@@ -718,6 +718,13 @@ class DockerAPI(Resource):
 
 def load(app):
     app.db.create_all()
+    # Add 'name' column to docker_config if it doesn't exist yet (migration)
+    try:
+        with app.db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE docker_config ADD COLUMN name VARCHAR(128)"))
+            conn.commit()
+    except Exception:
+        pass
     CHALLENGE_CLASSES['docker'] = DockerChallengeType
     @app.template_filter('datetimeformat')
     def datetimeformat(value, format='%Y-%m-%d %H:%M:%S'):
