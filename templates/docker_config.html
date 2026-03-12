@@ -19,7 +19,8 @@
                 <thead class="thead-dark">
                     <tr>
                         <th>Name</th>
-                        <th>Hostname</th>
+                        <th>Docker Socket</th>
+                        <th>IP publique</th>
                         <th>TLS</th>
                         <th>Repositories</th>
                         <th>Actions</th>
@@ -30,6 +31,7 @@
                     <tr {% if edit_server and edit_server.id == s.id %}class="table-info"{% endif %}>
                         <td>{% if s.name %}{{ s.name }}{% else %}<em class="text-muted">—</em>{% endif %}</td>
                         <td><code>{{ s.hostname }}</code></td>
+                        <td>{% if s.public_ip %}<code>{{ s.public_ip }}</code>{% else %}<em class="text-muted">—</em>{% endif %}</td>
                         <td>
                             {% if s.tls_enabled %}
                             <span class="badge badge-success">Yes</span>
@@ -39,9 +41,12 @@
                         </td>
                         <td>
                             {% if s.repositories %}
-                            <small>{{ s.repositories }}</small>
+                            {% set repos = s.repositories.split(',') %}
+                            <a href="#" class="repo-count-link" data-repos="{{ s.repositories }}" data-server="{{ s.name or s.hostname }}">
+                                {{ repos | length }} élément{% if repos | length > 1 %}s{% endif %}
+                            </a>
                             {% else %}
-                            <em class="text-muted">none selected</em>
+                            <em class="text-muted">aucun</em>
                             {% endif %}
                         </td>
                         <td>
@@ -80,10 +85,19 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="hostname-input">Hostname</label>
+                    <label for="hostname-input">Docker Socket / API URL</label>
                     <input class="form-control" type="text" name="hostname" id="hostname-input"
-                           placeholder="Ex: 10.10.10.10:2376"
+                           placeholder="Ex: unix:///var/run/docker.sock ou 10.10.10.10:2376"
                            value="{{ edit_server.hostname if edit_server and edit_server.hostname else '' }}"/>
+                    <small class="form-text text-muted">URL utilisée par le serveur pour contacter l'API Docker.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="public-ip-input">IP publique <small class="text-muted">(affichée aux joueurs)</small></label>
+                    <input class="form-control" type="text" name="public_ip" id="public-ip-input"
+                           placeholder="Ex: 10.10.10.10 ou ctf.example.com"
+                           value="{{ edit_server.public_ip if edit_server and edit_server.public_ip else '' }}"/>
+                    <small class="form-text text-muted">Adresse IP ou nom de domaine accessible par les joueurs.</small>
                 </div>
 
                 <div class="form-group">
@@ -165,6 +179,20 @@
         </div>
     </div>
 </div>
+<!-- Repositories Modal -->
+<div class="modal fade" id="repoModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Repositories — <span id="repoModalServer"></span></h5>
+                <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+            </div>
+            <div class="modal-body">
+                <ul id="repoModalList" class="list-group list-group-flush"></ul>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock content %}
 {% block scripts %}
 <script>
@@ -174,5 +202,23 @@ function enable_file_form(enabled) {
     document.getElementById('client_cert').disabled = disabled;
     document.getElementById('client_key').disabled = disabled;
 }
+
+document.querySelectorAll('.repo-count-link').forEach(function(link) {
+    link.addEventListener('click', function(e) {
+        e.preventDefault();
+        var repos = this.dataset.repos.split(',');
+        var server = this.dataset.server;
+        document.getElementById('repoModalServer').textContent = server;
+        var list = document.getElementById('repoModalList');
+        list.innerHTML = '';
+        repos.forEach(function(repo) {
+            var li = document.createElement('li');
+            li.className = 'list-group-item d-flex align-items-center';
+            li.innerHTML = '<span class="badge badge-secondary mr-2">img</span><code>' + repo.trim() + '</code>';
+            list.appendChild(li);
+        });
+        $('#repoModal').modal('show');
+    });
+});
 </script>
 {% endblock scripts %}

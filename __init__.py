@@ -58,6 +58,7 @@ class DockerConfig(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column("name", db.String(128), index=True)
     hostname = db.Column("hostname", db.String(64), index=True)
+    public_ip = db.Column("public_ip", db.String(128), index=True)
     tls_enabled = db.Column("tls_enabled", db.Boolean, default=False, index=True)
     ca_cert = db.Column("ca_cert", db.String(2200), index=True)
     client_cert = db.Column("client_cert", db.String(2000), index=True)
@@ -183,6 +184,7 @@ def define_docker_admin(app):
                 b.client_key = client_key
             b.name = request.form.get('name', '').strip()
             b.hostname = request.form['hostname']
+            b.public_ip = request.form.get('public_ip', '').strip()
             b.tls_enabled = request.form.get('tls_enabled') == 'True'
             if not b.tls_enabled:
                 b.ca_cert = None
@@ -612,7 +614,7 @@ class ContainerAPI(Resource):
             revert_time=unix_time(datetime.utcnow()) + 30,
             instance_id=create[0]['Id'],
             ports=','.join([p[0]['HostPort'] for p in ports]),
-            host=docker.hostname,
+            host=docker.public_ip or docker.hostname,
             challenge=challenge
         )
         db.session.add(entry)
