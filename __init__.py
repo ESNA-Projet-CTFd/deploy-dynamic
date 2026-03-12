@@ -34,7 +34,8 @@ from wtforms import (
 # from wtforms import TextField, SubmitField, BooleanField, HiddenField, FileField, SelectMultipleField
 from wtforms.validators import DataRequired, ValidationError, InputRequired
 from werkzeug.utils import secure_filename
-import requests
+from docker import DockerClient
+from docker.tls import TLSConfig
 import tempfile
 from CTFd.utils.dates import unix_time
 from datetime import datetime
@@ -100,10 +101,40 @@ def get_random_docker():
     return random.choice(configs)
 
 
+def get_docker_client(config):
+    """Create a DockerClient from a DockerConfig. Supports unix://, tcp://, and TLS."""
+    host = config.hostname or ''
+    if not host.startswith(('unix://', 'tcp://')):
+        host = f'tcp://{host}'
+    if config.tls_enabled:
+        tmp = []
+        def _write_tmp(content):
+            f = tempfile.NamedTemporaryFile(delete=False, suffix='.pem')
+            f.write(content.encode() if isinstance(content, str) else content)
+            f.close()
+            tmp.append(f.name)
+            return f.name
+        tls = TLSConfig(
+            ca_cert=_write_tmp(config.ca_cert),
+            client_cert=(_write_tmp(config.client_cert), _write_tmp(config.client_key)),
+            verify=True,
+        )
+        client = DockerClient(base_url=host, tls=tls)
+        client._tls_tmp_files = tmp
+        return client
+    return DockerClient(base_url=host)
+
+
+def _close_client(client):
+    client.close()
+    for f in getattr(client, '_tls_tmp_files', []):
+        Path(f).unlink(missing_ok=True)
+
+
 def get_docker_by_host(host):
-    """Find DockerConfig whose hostname matches the given host (IP/name without port)."""
+    """Find DockerConfig whose hostname matches the stored host key."""
     for c in DockerConfig.query.all():
-        if c.hostname and c.hostname.split(':')[0] == host:
+        if c.hostname == host:
             return c
     return DockerConfig.query.first()
 
@@ -236,142 +267,80 @@ class KillContainerAPI(Resource):
         return True
 
 
-def do_request(docker, url, headers=None, method='GET'):
-    tls = docker.tls_enabled
-    prefix = 'https' if tls else 'http'
-    host = docker.hostname
-    URL_TEMPLATE = '%s://%s' % (prefix, host)
-    try:
-        if tls:
-            cert, verify = get_client_cert(docker)
-            if (method == 'GET'):
-                r = requests.get(url=f"%s{url}" % URL_TEMPLATE, cert=cert, verify=verify, headers=headers)
-            elif (method == 'DELETE'):
-                r = requests.delete(url=f"%s{url}" % URL_TEMPLATE, cert=cert, verify=verify, headers=headers)
-            # Clean up the cert files:
-            for file_path in [*cert, verify]:
-                if file_path:
-                    Path(file_path).unlink(missing_ok=True)
-        else:
-            if (method == 'GET'):
-                r = requests.get(url=f"%s{url}" % URL_TEMPLATE, headers=headers)
-            elif (method == 'DELETE'):
-                r = requests.delete(url=f"%s{url}" % URL_TEMPLATE, headers=headers)
-    except:
-        traceback.print_exc()
-        r = []
-    return r
-
-
-def get_client_cert(docker):
-    # this can be done more efficiently, but works for now.
-    try:
-        ca = docker.ca_cert
-        client = docker.client_cert
-        ckey = docker.client_key
-        ca_file = tempfile.NamedTemporaryFile(delete=False)
-        ca_file.write(ca.encode())
-        ca_file.seek(0)
-        client_file = tempfile.NamedTemporaryFile(delete=False)
-        client_file.write(client.encode())
-        client_file.seek(0)
-        key_file = tempfile.NamedTemporaryFile(delete=False)
-        key_file.write(ckey.encode())
-        key_file.seek(0)
-        CERT = (client_file.name, key_file.name)
-    except:
-        traceback.print_exc()
-        CERT = None
-    return CERT, ca_file.name
-
-
 # For the Docker Config Page. Gets the Current Repositories available on the Docker Server.
-def get_repositories(docker, tags=False, repos=False):
-    r = do_request(docker, '/images/json?all=1')
-    result = list()
-    for i in r.json():
-        if not i['RepoTags'] == []:
-            if not i['RepoTags'][0].split(':')[0] == '<none>':
-                if repos:
-                    if not i['RepoTags'][0].split(':')[0] in repos:
-                        continue
-                if not tags:
-                    result.append(i['RepoTags'][0].split(':')[0])
-                else:
-                    result.append(i['RepoTags'][0])
-    return list(set(result))
+def get_repositories(config, tags=False, repos=False):
+    client = get_docker_client(config)
+    try:
+        result = []
+        for image in client.images.list():
+            for tag in (image.tags or []):
+                repo = tag.split(':')[0]
+                if repo == '<none>':
+                    continue
+                if repos and repo not in repos:
+                    continue
+                result.append(tag if tags else repo)
+        return list(set(result))
+    finally:
+        _close_client(client)
 
 
-def get_unavailable_ports(docker):
-    r = do_request(docker, '/containers/json?all=1')
-    result = list()
-    for i in r.json():
-        if i.get('Ports'):
-            for p in i['Ports']:
-                if 'PublicPort' in p:
-                    result.append(p['PublicPort'])
-    return result
+def get_unavailable_ports(config):
+    client = get_docker_client(config)
+    try:
+        result = []
+        for container in client.containers.list(all=True):
+            for bindings in (container.ports or {}).values():
+                for b in (bindings or []):
+                    if 'HostPort' in b:
+                        result.append(int(b['HostPort']))
+        return result
+    finally:
+        _close_client(client)
 
 
-def get_required_ports(docker, image):
-    r = do_request(docker, f'/images/{image}/json?all=1')
-    result = r.json()['Config']['ExposedPorts'].keys()
-    return result
+def get_required_ports(config, image):
+    client = get_docker_client(config)
+    try:
+        img = client.images.get(image)
+        return list(img.attrs['Config'].get('ExposedPorts', {}).keys())
+    finally:
+        _close_client(client)
 
 
-def create_container(docker, image, team, portbl):
-    tls = docker.tls_enabled
-    CERT = None
-    if not tls:
-        prefix = 'http'
-    else:
-        prefix = 'https'
-    host = docker.hostname
-    URL_TEMPLATE = '%s://%s' % (prefix, host)
-    needed_ports = get_required_ports(docker, image)
-    team = hashlib.md5(team.encode("utf-8")).hexdigest()[:10]
-    container_name = "%s_%s" % (image.split(':')[1], team)
-    assigned_ports = dict()
-    for i in needed_ports:
+def create_container(config, image, team, portbl):
+    needed_ports = get_required_ports(config, image)
+    team_hash = hashlib.md5(team.encode("utf-8")).hexdigest()[:10]
+    container_name = "%s_%s" % (image.split(':')[1], team_hash)
+    port_bindings = {}
+    for port in needed_ports:
         while True:
-            assigned_port = random.choice(range(30000, 60000))
-            if assigned_port not in portbl:
-                assigned_ports['%s/tcp' % assigned_port] = {}
+            assigned = random.choice(range(30000, 60000))
+            if assigned not in portbl:
+                portbl.append(assigned)
+                port_bindings[port] = assigned
                 break
-    ports = dict()
-    bindings = dict()
-    tmp_ports = list(assigned_ports.keys())
-    for i in needed_ports:
-        ports[i] = {}
-        bindings[i] = [{"HostPort": tmp_ports.pop()}]
-    headers = {'Content-Type': "application/json"}
-    data = json.dumps({"Image": image, "ExposedPorts": ports, "HostConfig": {"PortBindings": bindings}})
-    if tls:
-        cert, verify = get_client_cert(docker)
-        r = requests.post(url="%s/containers/create?name=%s" % (URL_TEMPLATE, container_name), cert=cert,
-                      verify=verify, data=data, headers=headers)
-        result = r.json()
-        s = requests.post(url="%s/containers/%s/start" % (URL_TEMPLATE, result['Id']), cert=cert, verify=verify,
-                          headers=headers)
-        # Clean up the cert files:
-        for file_path in [*cert, verify]:
-            if file_path:
-                Path(file_path).unlink(missing_ok=True)
-
-    else:
-        r = requests.post(url="%s/containers/create?name=%s" % (URL_TEMPLATE, container_name),
-                          data=data, headers=headers)
-        print(r.request.method, r.request.url, r.request.body)
-        result = r.json()
-        print(result)
-        # name conflicts are not handled properly
-        s = requests.post(url="%s/containers/%s/start" % (URL_TEMPLATE, result['Id']), headers=headers)
+    client = get_docker_client(config)
+    try:
+        container = client.containers.create(image, name=container_name, ports=port_bindings)
+        container.start()
+        result = {'Id': container.id}
+    finally:
+        _close_client(client)
+    bindings = {port: [{"HostPort": str(host_port)}] for port, host_port in port_bindings.items()}
+    data = json.dumps({"Image": image, "ExposedPorts": {p: {} for p in needed_ports},
+                       "HostConfig": {"PortBindings": bindings}})
     return result, data
 
 
-def delete_container(docker, instance_id):
-    headers = {'Content-Type': "application/json"}
-    do_request(docker, f'/containers/{instance_id}?force=true', headers=headers, method='DELETE')
+def delete_container(config, instance_id):
+    client = get_docker_client(config)
+    try:
+        client.containers.get(instance_id).remove(force=True)
+    except Exception:
+        traceback.print_exc()
+    finally:
+        _close_client(client)
     return True
 
 
@@ -637,7 +606,7 @@ class ContainerAPI(Resource):
             revert_time=unix_time(datetime.utcnow()) + 30,
             instance_id=create[0]['Id'],
             ports=','.join([p[0]['HostPort'] for p in ports]),
-            host=str(docker.hostname).split(':')[0],
+            host=_get_host_key(docker),
             challenge=challenge
         )
         db.session.add(entry)
