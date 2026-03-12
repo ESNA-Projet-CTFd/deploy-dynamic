@@ -702,6 +702,13 @@ def load(app):
             conn.commit()
     except Exception:
         pass
+    # Add 'public_ip' column to docker_config if it doesn't exist yet (migration)
+    try:
+        with app.db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE docker_config ADD COLUMN public_ip VARCHAR(128)"))
+            conn.commit()
+    except Exception:
+        pass
     CHALLENGE_CLASSES['docker'] = DockerChallengeType
     @app.template_filter('datetimeformat')
     def datetimeformat(value, format='%Y-%m-%d %H:%M:%S'):
