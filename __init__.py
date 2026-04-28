@@ -1,3 +1,4 @@
+import sys
 import traceback
 
 from CTFd.plugins.challenges import BaseChallenge, CHALLENGE_CLASSES, get_chal_class
@@ -168,10 +169,12 @@ def _exec_on_host(config, script):
 
 
 def apply_ip_filter(config, host_ports, allowed_ip, instance_id):
-    """Insert DOCKER-USER rules dropping any traffic to host_ports not coming from allowed_ip.
+    """Insert DOCKER-USER rules rejecting traffic to host_ports not coming from allowed_ip.
 
     Picks the iptables backend (legacy/nft) actually used by Docker on the host by
     probing which one has the DOCKER-USER chain. Bails out if neither does.
+
+    Uses REJECT so the client gets immediate TCP RST / ICMP unreachable instead of timing out.
     """
     if not allowed_ip or not host_ports:
         return
@@ -181,11 +184,14 @@ def apply_ip_filter(config, host_ports, allowed_ip, instance_id):
     rule_cmds = []
     for port in host_ports:
         port = int(port)
-        for proto in ("tcp", "udp"):
-            rule_cmds.append(
-                f"$IPT -I DOCKER-USER -p {proto} -m conntrack --ctorigdstport {port} "
-                f"! -s {allowed_ip} -m comment --comment '{tag}' -j DROP"
-            )
+        rule_cmds.append(
+            f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} "
+            f"! -s {allowed_ip} -m comment --comment '{tag}' -j REJECT --reject-with tcp-reset"
+        )
+        rule_cmds.append(
+            f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} "
+            f"! -s {allowed_ip} -m comment --comment '{tag}' -j REJECT"
+        )
     script = (
         "set -e; "
         "apk add -q --no-cache iptables 2>/dev/null || true; "
@@ -193,9 +199,18 @@ def apply_ip_filter(config, host_ports, allowed_ip, instance_id):
         "  if $c -L DOCKER-USER -n >/dev/null 2>&1; then IPT=$c; break; fi; "
         "done; "
         "if [ -z \"$IPT\" ]; then echo 'No iptables backend with DOCKER-USER chain' >&2; exit 1; fi; "
+        "echo \"[deploy-dynamic] using $IPT\" >&2; "
         + "; ".join(rule_cmds)
     )
-    _exec_on_host(config, script)
+    print(f"[deploy-dynamic] applying iptables: ip={allowed_ip} ports={list(host_ports)} "
+          f"instance={instance_id[:12]}", file=sys.stderr, flush=True)
+    out = _exec_on_host(config, script)
+    if out:
+        try:
+            print("[deploy-dynamic] iptables helper output:", out.decode(errors='replace'),
+                  file=sys.stderr, flush=True)
+        except Exception:
+            pass
 
 
 def remove_ip_filter(config, instance_id):
@@ -703,6 +718,10 @@ class ContainerAPI(Resource):
         user_ip = get_ip(req=request)
         if not user_ip:
             return abort(500, "Could not determine your IP for access control. Contact an admin.")
+        print(f"[deploy-dynamic] deploying container for user={session.name} captured_ip={user_ip} "
+              f"remote_addr={request.remote_addr} access_route={list(request.access_route)} "
+              f"xff={request.headers.get('X-Forwarded-For')}",
+              file=sys.stderr, flush=True)
 
         portsbl = get_unavailable_ports(docker)
         try:
