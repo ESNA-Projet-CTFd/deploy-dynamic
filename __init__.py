@@ -841,16 +841,15 @@ def load(app):
     # Idempotent: re-running on TEXT columns is a no-op on Postgres/MySQL.
     try:
         dialect = app.db.engine.dialect.name
-        with app.db.engine.connect() as conn:
-            if dialect == 'postgresql':
+        if dialect == 'postgresql':
+            with app.db.engine.begin() as conn:
                 for col in ('ca_cert', 'client_cert', 'client_key'):
                     conn.execute(db.text(f"ALTER TABLE docker_config ALTER COLUMN {col} TYPE TEXT"))
-                conn.commit()
-            elif dialect in ('mysql', 'mariadb'):
+        elif dialect in ('mysql', 'mariadb'):
+            with app.db.engine.begin() as conn:
                 for col in ('ca_cert', 'client_cert', 'client_key'):
                     conn.execute(db.text(f"ALTER TABLE docker_config MODIFY {col} TEXT"))
-                conn.commit()
-            # SQLite VARCHAR doesn't enforce length, no migration needed.
+        # SQLite VARCHAR doesn't enforce length, no migration needed.
     except Exception:
         traceback.print_exc()
     CHALLENGE_CLASSES['docker'] = DockerChallengeType
