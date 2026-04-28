@@ -61,9 +61,9 @@ class DockerConfig(db.Model):
     hostname = db.Column("hostname", db.String(64), index=True)
     public_ip = db.Column("public_ip", db.String(128), index=True)
     tls_enabled = db.Column("tls_enabled", db.Boolean, default=False, index=True)
-    ca_cert = db.Column("ca_cert", db.String(2200), index=True)
-    client_cert = db.Column("client_cert", db.String(2000), index=True)
-    client_key = db.Column("client_key", db.String(3300), index=True)
+    ca_cert = db.Column("ca_cert", db.Text)
+    client_cert = db.Column("client_cert", db.Text)
+    client_key = db.Column("client_key", db.Text)
     repositories = db.Column("repositories", db.String(1024), index=True)
 
 
@@ -837,6 +837,22 @@ class DockerAPI(Resource):
 
 def load(app):
     app.db.create_all()
+    # Widen TLS cert columns to TEXT — 4096-bit RSA certs/keys overflow the original VARCHAR sizes.
+    # Idempotent: re-running on TEXT columns is a no-op on Postgres/MySQL.
+    try:
+        dialect = app.db.engine.dialect.name
+        with app.db.engine.connect() as conn:
+            if dialect == 'postgresql':
+                for col in ('ca_cert', 'client_cert', 'client_key'):
+                    conn.execute(db.text(f"ALTER TABLE docker_config ALTER COLUMN {col} TYPE TEXT"))
+                conn.commit()
+            elif dialect in ('mysql', 'mariadb'):
+                for col in ('ca_cert', 'client_cert', 'client_key'):
+                    conn.execute(db.text(f"ALTER TABLE docker_config MODIFY {col} TEXT"))
+                conn.commit()
+            # SQLite VARCHAR doesn't enforce length, no migration needed.
+    except Exception:
+        traceback.print_exc()
     CHALLENGE_CLASSES['docker'] = DockerChallengeType
     @app.template_filter('datetimeformat')
     def datetimeformat(value, format='%Y-%m-%d %H:%M:%S'):
