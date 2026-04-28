@@ -185,25 +185,28 @@ def apply_ip_filter(config, host_ports, allowed_ip, instance_id):
     tag = _iptables_tag(instance_id)
     # Each `-I` inserts at position 1, so we add the REJECTs first and the RETURNs last —
     # the RETURNs end up on top and are evaluated before the catch-all REJECTs.
+    # `--ctdir ORIGINAL` is critical: it scopes the rules to the inbound direction only.
+    # Without it, the container's reply packets (REPLY direction) match the catch-all REJECT
+    # because their source IP is the container's bridge IP, not the user's.
     rule_cmds = []
     for port in host_ports:
         port = int(port)
         rule_cmds.append(
-            f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} "
+            f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} --ctdir ORIGINAL "
             f"-m comment --comment '{tag}' -j REJECT --reject-with tcp-reset"
         )
         rule_cmds.append(
-            f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} "
+            f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} --ctdir ORIGINAL "
             f"-m comment --comment '{tag}' -j REJECT"
         )
     for port in host_ports:
         port = int(port)
         rule_cmds.append(
-            f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} "
+            f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} --ctdir ORIGINAL "
             f"-s {allowed_ip} -m comment --comment '{tag}' -j RETURN"
         )
         rule_cmds.append(
-            f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} "
+            f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} --ctdir ORIGINAL "
             f"-s {allowed_ip} -m comment --comment '{tag}' -j RETURN"
         )
     script = (
