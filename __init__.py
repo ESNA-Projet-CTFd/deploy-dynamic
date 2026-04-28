@@ -838,16 +838,23 @@ class DockerAPI(Resource):
 def load(app):
     app.db.create_all()
     # Widen TLS cert columns to TEXT — 4096-bit RSA certs/keys overflow the original VARCHAR sizes.
-    # Idempotent: re-running on TEXT columns is a no-op on Postgres/MySQL.
+    # Also drop the legacy btree indexes on these columns (created by the old `index=True`),
+    # because btree entries are capped at ~2704 bytes in Postgres and can't hold full 4096-bit PEMs.
+    # Idempotent.
     try:
         dialect = app.db.engine.dialect.name
         if dialect == 'postgresql':
             with app.db.engine.begin() as conn:
                 for col in ('ca_cert', 'client_cert', 'client_key'):
+                    conn.execute(db.text(f"DROP INDEX IF EXISTS ix_docker_config_{col}"))
                     conn.execute(db.text(f"ALTER TABLE docker_config ALTER COLUMN {col} TYPE TEXT"))
         elif dialect in ('mysql', 'mariadb'):
             with app.db.engine.begin() as conn:
                 for col in ('ca_cert', 'client_cert', 'client_key'):
+                    try:
+                        conn.execute(db.text(f"DROP INDEX ix_docker_config_{col} ON docker_config"))
+                    except Exception:
+                        pass
                     conn.execute(db.text(f"ALTER TABLE docker_config MODIFY {col} TEXT"))
         # SQLite VARCHAR doesn't enforce length, no migration needed.
     except Exception:
