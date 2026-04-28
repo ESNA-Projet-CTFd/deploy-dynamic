@@ -80,6 +80,7 @@ class DockerChallengeTracker(db.Model):
     ports = db.Column('ports', db.String(128), index=True)
     host = db.Column('host', db.String(128), index=True)
     challenge = db.Column('challenge', db.String(256), index=True)
+    user_ip = db.Column('user_ip', db.String(64), index=True)
 
 class DockerConfigForm(BaseForm):
     id = HiddenField()
@@ -135,6 +136,90 @@ def _close_client(client):
     client.close()
     for f in getattr(client, '_tls_tmp_files', []):
         Path(f).unlink(missing_ok=True)
+
+
+IPTABLES_HELPER_IMAGE = "alpine:latest"
+
+
+def _iptables_tag(instance_id):
+    # iptables comments are limited to 256 chars, but keep tag short for grep safety
+    return f"ctfd-{(instance_id or '')[:12]}"
+
+
+def _iptables_binary(ip):
+    return "ip6tables" if ip and ":" in ip else "iptables"
+
+
+def _exec_on_host(config, script):
+    """Run a shell script on the Docker host using a temporary privileged container with host networking."""
+    client = get_docker_client(config)
+    try:
+        return client.containers.run(
+            IPTABLES_HELPER_IMAGE,
+            command=["sh", "-c", script],
+            cap_add=["NET_ADMIN"],
+            network_mode="host",
+            remove=True,
+            stdout=True,
+            stderr=True,
+        )
+    finally:
+        _close_client(client)
+
+
+def apply_ip_filter(config, host_ports, allowed_ip, instance_id):
+    """Insert DOCKER-USER rules dropping any traffic to host_ports not coming from allowed_ip.
+
+    Picks the iptables backend (legacy/nft) actually used by Docker on the host by
+    probing which one has the DOCKER-USER chain. Bails out if neither does.
+    """
+    if not allowed_ip or not host_ports:
+        return
+    candidates = "ip6tables-legacy ip6tables-nft ip6tables" if ":" in allowed_ip \
+        else "iptables-legacy iptables-nft iptables"
+    tag = _iptables_tag(instance_id)
+    rule_cmds = []
+    for port in host_ports:
+        port = int(port)
+        for proto in ("tcp", "udp"):
+            rule_cmds.append(
+                f"$IPT -I DOCKER-USER -p {proto} -m conntrack --ctorigdstport {port} "
+                f"! -s {allowed_ip} -m comment --comment '{tag}' -j DROP"
+            )
+    script = (
+        "set -e; "
+        "apk add -q --no-cache iptables 2>/dev/null || true; "
+        f"IPT=; for c in {candidates}; do "
+        "  if $c -L DOCKER-USER -n >/dev/null 2>&1; then IPT=$c; break; fi; "
+        "done; "
+        "if [ -z \"$IPT\" ]; then echo 'No iptables backend with DOCKER-USER chain' >&2; exit 1; fi; "
+        + "; ".join(rule_cmds)
+    )
+    _exec_on_host(config, script)
+
+
+def remove_ip_filter(config, instance_id):
+    """Delete DOCKER-USER rules tagged for this instance. Best-effort, idempotent.
+
+    Tries every iptables backend (legacy/nft, v4/v6) so we clean up regardless of
+    which one Docker is using on this host.
+    """
+    tag = _iptables_tag(instance_id)
+    backends = "iptables-legacy iptables-nft iptables ip6tables-legacy ip6tables-nft ip6tables"
+    script = (
+        "apk add -q --no-cache iptables 2>/dev/null || true; "
+        f"for c in {backends}; do "
+        "  command -v $c >/dev/null 2>&1 || continue; "
+        "  $c -L DOCKER-USER -n >/dev/null 2>&1 || continue; "
+        f"  $c -L DOCKER-USER --line-numbers -n 2>/dev/null | grep -F '{tag}' | "
+        "    awk '{print $1}' | sort -rn | "
+        "    while read n; do $c -D DOCKER-USER \"$n\" 2>/dev/null || true; done; "
+        "done; true"
+    )
+    try:
+        _exec_on_host(config, script)
+    except Exception:
+        traceback.print_exc()
 
 
 def get_docker_by_host(host):
@@ -316,7 +401,7 @@ def get_required_ports(config, image):
         _close_client(client)
 
 
-def create_container(config, image, team, portbl):
+def create_container(config, image, team, portbl, allowed_ip=None):
     needed_ports = get_required_ports(config, image)
     team_hash = hashlib.md5(team.encode("utf-8")).hexdigest()[:10]
     container_name = "%s_%s" % (image.split(':')[1], team_hash)
@@ -338,10 +423,22 @@ def create_container(config, image, team, portbl):
     bindings = {port: [{"HostPort": str(host_port)}] for port, host_port in port_bindings.items()}
     data = json.dumps({"Image": image, "ExposedPorts": {p: {} for p in needed_ports},
                        "HostConfig": {"PortBindings": bindings}})
+    if allowed_ip:
+        try:
+            apply_ip_filter(config, list(port_bindings.values()), allowed_ip, result['Id'])
+        except Exception:
+            # If the lock-down fails, tear the container down rather than expose it to everyone.
+            traceback.print_exc()
+            try:
+                delete_container(config, result['Id'])
+            except Exception:
+                traceback.print_exc()
+            raise
     return result, data
 
 
 def delete_container(config, instance_id):
+    remove_ip_filter(config, instance_id)
     client = get_docker_client(config)
     try:
         client.containers.get(instance_id).remove(force=True)
@@ -603,8 +700,16 @@ class ContainerAPI(Resource):
             if int(session.id) == int(i.user_id):
                 return abort(403,f"Another container is already running for challenge:<br><i><b>{i.challenge}</b></i>.<br>Please stop this first.<br>You can only run one container.")
 
+        user_ip = get_ip(req=request)
+        if not user_ip:
+            return abort(500, "Could not determine your IP for access control. Contact an admin.")
+
         portsbl = get_unavailable_ports(docker)
-        create = create_container(docker, container, session.name, portsbl)
+        try:
+            create = create_container(docker, container, session.name, portsbl, allowed_ip=user_ip)
+        except Exception:
+            traceback.print_exc()
+            return abort(500, "Failed to lock down the container. The instance was not deployed.")
         ports = json.loads(create[1])['HostConfig']['PortBindings'].values()
         entry = DockerChallengeTracker(
             team_id=session.id if is_teams_mode() else None,
@@ -615,7 +720,8 @@ class ContainerAPI(Resource):
             instance_id=create[0]['Id'],
             ports=','.join([p[0]['HostPort'] for p in ports]),
             host=docker.public_ip or docker.hostname,
-            challenge=challenge
+            challenge=challenge,
+            user_ip=user_ip,
         )
         db.session.add(entry)
         db.session.commit()
@@ -706,6 +812,13 @@ def load(app):
     try:
         with app.db.engine.connect() as conn:
             conn.execute(db.text("ALTER TABLE docker_config ADD COLUMN public_ip VARCHAR(128)"))
+            conn.commit()
+    except Exception:
+        pass
+    # Add 'user_ip' column to docker_challenge_tracker if it doesn't exist yet (migration)
+    try:
+        with app.db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE docker_challenge_tracker ADD COLUMN user_ip VARCHAR(64)"))
             conn.commit()
     except Exception:
         pass
