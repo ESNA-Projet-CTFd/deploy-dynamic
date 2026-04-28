@@ -169,28 +169,42 @@ def _exec_on_host(config, script):
 
 
 def apply_ip_filter(config, host_ports, allowed_ip, instance_id):
-    """Insert DOCKER-USER rules rejecting traffic to host_ports not coming from allowed_ip.
+    """Insert DOCKER-USER rules so only allowed_ip can reach host_ports; everyone else is rejected.
 
     Picks the iptables backend (legacy/nft) actually used by Docker on the host by
     probing which one has the DOCKER-USER chain. Bails out if neither does.
 
-    Uses REJECT so the client gets immediate TCP RST / ICMP unreachable instead of timing out.
+    Uses an ALLOW-then-REJECT pattern (no negated source match) because `! -s` combined
+    with `-m conntrack --ctorigdstport` behaves unreliably under iptables-nft: a positive
+    match followed by RETURN is parsed identically by both backends.
     """
     if not allowed_ip or not host_ports:
         return
     candidates = "ip6tables-legacy ip6tables-nft ip6tables" if ":" in allowed_ip \
         else "iptables-legacy iptables-nft iptables"
     tag = _iptables_tag(instance_id)
+    # Each `-I` inserts at position 1, so we add the REJECTs first and the RETURNs last —
+    # the RETURNs end up on top and are evaluated before the catch-all REJECTs.
     rule_cmds = []
     for port in host_ports:
         port = int(port)
         rule_cmds.append(
             f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} "
-            f"! -s {allowed_ip} -m comment --comment '{tag}' -j REJECT --reject-with tcp-reset"
+            f"-m comment --comment '{tag}' -j REJECT --reject-with tcp-reset"
         )
         rule_cmds.append(
             f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} "
-            f"! -s {allowed_ip} -m comment --comment '{tag}' -j REJECT"
+            f"-m comment --comment '{tag}' -j REJECT"
+        )
+    for port in host_ports:
+        port = int(port)
+        rule_cmds.append(
+            f"$IPT -I DOCKER-USER -p tcp -m conntrack --ctorigdstport {port} "
+            f"-s {allowed_ip} -m comment --comment '{tag}' -j RETURN"
+        )
+        rule_cmds.append(
+            f"$IPT -I DOCKER-USER -p udp -m conntrack --ctorigdstport {port} "
+            f"-s {allowed_ip} -m comment --comment '{tag}' -j RETURN"
         )
     script = (
         "set -e; "
@@ -820,27 +834,6 @@ class DockerAPI(Resource):
 
 def load(app):
     app.db.create_all()
-    # Add 'name' column to docker_config if it doesn't exist yet (migration)
-    try:
-        with app.db.engine.connect() as conn:
-            conn.execute(db.text("ALTER TABLE docker_config ADD COLUMN name VARCHAR(128)"))
-            conn.commit()
-    except Exception:
-        pass
-    # Add 'public_ip' column to docker_config if it doesn't exist yet (migration)
-    try:
-        with app.db.engine.connect() as conn:
-            conn.execute(db.text("ALTER TABLE docker_config ADD COLUMN public_ip VARCHAR(128)"))
-            conn.commit()
-    except Exception:
-        pass
-    # Add 'user_ip' column to docker_challenge_tracker if it doesn't exist yet (migration)
-    try:
-        with app.db.engine.connect() as conn:
-            conn.execute(db.text("ALTER TABLE docker_challenge_tracker ADD COLUMN user_ip VARCHAR(64)"))
-            conn.commit()
-    except Exception:
-        pass
     CHALLENGE_CLASSES['docker'] = DockerChallengeType
     @app.template_filter('datetimeformat')
     def datetimeformat(value, format='%Y-%m-%d %H:%M:%S'):
