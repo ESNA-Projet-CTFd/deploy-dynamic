@@ -485,10 +485,42 @@ class DockerChallenge(Challenges):
     __mapper_args__ = {'polymorphic_identity': 'docker'}
     id = db.Column(None, db.ForeignKey('challenges.id'), primary_key=True)
     docker_image = db.Column(db.String(128), index=True)
-    initial = db.Column(db.Integer, default=0)
-    minimum = db.Column(db.Integer, default=0)
-    decay = db.Column(db.Integer, default=0)
-    function = db.Column(db.String(32), default='logarithmic')
+    docker_initial = db.Column(db.Integer, default=0)
+    docker_minimum = db.Column(db.Integer, default=0)
+    docker_decay = db.Column(db.Integer, default=0)
+    docker_function = db.Column(db.String(32), default='logarithmic')
+
+    @property
+    def initial(self):
+        return self.docker_initial
+
+    @initial.setter
+    def initial(self, v):
+        self.docker_initial = v
+
+    @property
+    def minimum(self):
+        return self.docker_minimum
+
+    @minimum.setter
+    def minimum(self, v):
+        self.docker_minimum = v
+
+    @property
+    def decay(self):
+        return self.docker_decay
+
+    @decay.setter
+    def decay(self, v):
+        self.docker_decay = v
+
+    @property
+    def function(self):
+        return self.docker_function
+
+    @function.setter
+    def function(self, v):
+        self.docker_function = v
 
     def __init__(self, *args, **kwargs):
         super().__init__(**kwargs)
@@ -857,15 +889,15 @@ def load(app):
                 for col in ('ca_cert', 'client_cert', 'client_key'):
                     conn.execute(db.text(f"DROP INDEX IF EXISTS ix_docker_config_{col}"))
                     conn.execute(db.text(f"ALTER TABLE docker_config ALTER COLUMN {col} TYPE TEXT"))
-                # Add dynamic scoring columns to docker_challenges if they don't exist yet
+                # Add dynamic scoring columns to docker_challenge if they don't exist yet (upgrade path)
                 for col, coltype, default in (
-                    ('initial', 'INTEGER', '0'),
-                    ('minimum', 'INTEGER', '0'),
-                    ('decay', 'INTEGER', '0'),
-                    ('function', 'VARCHAR(32)', "'logarithmic'"),
+                    ('docker_initial', 'INTEGER', '0'),
+                    ('docker_minimum', 'INTEGER', '0'),
+                    ('docker_decay', 'INTEGER', '0'),
+                    ('docker_function', 'VARCHAR(32)', "'logarithmic'"),
                 ):
                     conn.execute(db.text(
-                        f"ALTER TABLE docker_challenges ADD COLUMN IF NOT EXISTS {col} {coltype} DEFAULT {default}"
+                        f"ALTER TABLE docker_challenge ADD COLUMN IF NOT EXISTS {col} {coltype} DEFAULT {default}"
                     ))
         elif dialect in ('mysql', 'mariadb'):
             with app.db.engine.begin() as conn:
@@ -875,31 +907,31 @@ def load(app):
                     except Exception:
                         pass
                     conn.execute(db.text(f"ALTER TABLE docker_config MODIFY {col} TEXT"))
-                # Add dynamic scoring columns if they don't exist yet
-                result = conn.execute(db.text("SHOW COLUMNS FROM docker_challenges"))
+                # Add dynamic scoring columns if they don't exist yet (upgrade path)
+                result = conn.execute(db.text("SHOW COLUMNS FROM docker_challenge"))
                 existing_cols = {row[0] for row in result}
                 for col, coltype, default in (
-                    ('initial', 'INTEGER', '0'),
-                    ('minimum', 'INTEGER', '0'),
-                    ('decay', 'INTEGER', '0'),
-                    ('function', 'VARCHAR(32)', "'logarithmic'"),
+                    ('docker_initial', 'INTEGER', '0'),
+                    ('docker_minimum', 'INTEGER', '0'),
+                    ('docker_decay', 'INTEGER', '0'),
+                    ('docker_function', 'VARCHAR(32)', "'logarithmic'"),
                 ):
                     if col not in existing_cols:
                         conn.execute(db.text(
-                            f"ALTER TABLE docker_challenges ADD COLUMN {col} {coltype} NOT NULL DEFAULT {default}"
+                            f"ALTER TABLE docker_challenge ADD COLUMN {col} {coltype} NOT NULL DEFAULT {default}"
                         ))
         else:
-            # SQLite: try adding each column, ignore error if already present
+            # SQLite: try adding each column, ignore error if already present (upgrade path)
             with app.db.engine.begin() as conn:
                 for col, coltype, default in (
-                    ('initial', 'INTEGER', '0'),
-                    ('minimum', 'INTEGER', '0'),
-                    ('decay', 'INTEGER', '0'),
-                    ('function', 'VARCHAR(32)', "'logarithmic'"),
+                    ('docker_initial', 'INTEGER', '0'),
+                    ('docker_minimum', 'INTEGER', '0'),
+                    ('docker_decay', 'INTEGER', '0'),
+                    ('docker_function', 'VARCHAR(32)', "'logarithmic'"),
                 ):
                     try:
                         conn.execute(db.text(
-                            f"ALTER TABLE docker_challenges ADD COLUMN {col} {coltype} DEFAULT {default}"
+                            f"ALTER TABLE docker_challenge ADD COLUMN {col} {coltype} DEFAULT {default}"
                         ))
                     except Exception:
                         pass
