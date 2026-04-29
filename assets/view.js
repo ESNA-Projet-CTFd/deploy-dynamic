@@ -36,17 +36,28 @@ function get_docker_status(container) {
         if (item.docker_image !== container) return;
         found = true;
 
-        var ports = Array.isArray(item.ports)
-          ? item.ports
-          : String(item.ports).split(",");
-        var portNum = String(ports[0]).split("/")[0].trim();
+        var ports = Array.isArray(item.ports) ? item.ports : String(item.ports).split(",");
+
+        // Normalise legacy format (plain string) into {container, host} objects
+        ports = ports.map((p) => {
+          if (typeof p === "object" && p !== null) return p;
+          var s = String(p).trim();
+          if (s.includes(":")) {
+            var idx = s.lastIndexOf(":");
+            return { container: s.substring(0, idx), host: s.substring(idx + 1) };
+          }
+          return { container: null, host: s };
+        });
+
+        // Use the first port's host value for single-placeholder replacement
+        var firstHostPort = ports.length > 0 ? String(ports[0].host).split("/")[0].trim() : "";
 
         // Replace placeholders in the challenge description
         var $connInfo = CTFd.lib.$(".challenge-connection-info");
         if ($connInfo.length > 0) {
           var connHtml = $connInfo.html();
           connHtml = connHtml.replace(/\bhost\b/gi, item.host);
-          connHtml = connHtml.replace(/\bport\b|\b\d{5}\b/gi, portNum);
+          connHtml = connHtml.replace(/\bport\b|\b\d{5}\b/gi, firstHostPort);
           if (!connHtml.includes("<a")) {
             connHtml = connHtml.replace(
               /(https?:\/\/[^\s<"']+)/,
@@ -57,14 +68,53 @@ function get_docker_status(container) {
           $connInfo.html(connHtml);
         }
 
-        // Build clickable links for each port
+        // Build a display entry per port based on the container-side port type
         var linksHtml = ports
           .map((port) => {
-            var p = String(port).split("/")[0].trim().split(" ")[0];
-            var url = `http://${item.host}:${p}`;
-            return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="docker-link">
-                    <i class="fas fa-external-link-alt"></i> ${url}
-                </a>`;
+            var hostPort = String(port.host).split("/")[0].trim();
+            var containerNum = port.container
+              ? parseInt(String(port.container).split("/")[0], 10)
+              : null;
+            var proto = port.container ? String(port.container).split("/")[1] : "tcp";
+
+            // SSH
+            if (containerNum === 22) {
+              var sshCmd = `ssh user@${item.host} -p ${hostPort}`;
+              return `<span class="docker-link docker-link-copy" title="Click to copy" onclick="navigator.clipboard.writeText('${sshCmd}').catch(()=>{})">
+                        <i class="fas fa-terminal"></i>&nbsp;${sshCmd}
+                      </span>`;
+            }
+
+            // HTTPS
+            if (containerNum === 443 || containerNum === 8443) {
+              var url = `https://${item.host}:${hostPort}`;
+              return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="docker-link">
+                        <i class="fas fa-lock"></i>&nbsp;${url}
+                      </a>`;
+            }
+
+            // HTTP (common web ports)
+            var webPorts = [80, 8080, 3000, 5000, 8000, 8888, 4000];
+            if (containerNum !== null && webPorts.includes(containerNum)) {
+              var url = `http://${item.host}:${hostPort}`;
+              return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="docker-link">
+                        <i class="fas fa-external-link-alt"></i>&nbsp;${url}
+                      </a>`;
+            }
+
+            // UDP
+            if (proto === "udp") {
+              var udpStr = `${item.host}:${hostPort}/udp`;
+              return `<span class="docker-link docker-link-copy" title="Click to copy" onclick="navigator.clipboard.writeText('${udpStr}').catch(()=>{})">
+                        <i class="fas fa-network-wired"></i>&nbsp;${udpStr}
+                      </span>`;
+            }
+
+            // Generic TCP (nc / pwntools)
+            var ncCmd = `nc ${item.host} ${hostPort}`;
+            return `<span class="docker-link docker-link-copy" title="Click to copy" onclick="navigator.clipboard.writeText('${ncCmd}').catch(()=>{})">
+                      <i class="fas fa-plug"></i>&nbsp;${ncCmd}
+                    </span>`;
           })
           .join("");
 

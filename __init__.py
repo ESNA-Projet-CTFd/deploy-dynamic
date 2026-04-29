@@ -481,6 +481,25 @@ def delete_container(config, instance_id):
     return True
 
 
+def _parse_ports(ports_str):
+    """Parse stored ports string into list of {container, host} dicts.
+
+    Handles both the new 'container_port:host_port' format and the legacy
+    'host_port' format for entries created before this change.
+    """
+    result = []
+    for p in (ports_str or '').split(','):
+        p = p.strip()
+        if not p:
+            continue
+        if ':' in p:
+            container_port, host_port = p.split(':', 1)
+            result.append({'container': container_port, 'host': host_port})
+        else:
+            result.append({'container': None, 'host': p})
+    return result
+
+
 class DockerChallenge(Challenges):
     __mapper_args__ = {'polymorphic_identity': 'docker'}
     id = db.Column(None, db.ForeignKey('challenges.id'), primary_key=True)
@@ -787,7 +806,12 @@ class ContainerAPI(Resource):
         except Exception:
             traceback.print_exc()
             return abort(500, "Failed to lock down the container. The instance was not deployed.")
-        ports = json.loads(create[1])['HostConfig']['PortBindings'].values()
+        port_bindings = json.loads(create[1])['HostConfig']['PortBindings']
+        ports_str = ','.join(
+            f"{cport}:{bindings[0]['HostPort']}"
+            for cport, bindings in port_bindings.items()
+            if bindings
+        )
         entry = DockerChallengeTracker(
             team_id=session.id if is_teams_mode() else None,
             user_id=session.id if not is_teams_mode() else None,
@@ -795,7 +819,7 @@ class ContainerAPI(Resource):
             timestamp=unix_time(datetime.utcnow()),
             revert_time=unix_time(datetime.utcnow()) + 30,
             instance_id=create[0]['Id'],
-            ports=','.join([p[0]['HostPort'] for p in ports]),
+            ports=ports_str,
             host=docker.public_ip or docker.hostname,
             challenge=challenge,
             user_ip=user_ip,
@@ -834,7 +858,7 @@ class DockerStatus(Resource):
                 'timestamp': i.timestamp,
                 'revert_time': i.revert_time,
                 'instance_id': i.instance_id,
-                'ports': i.ports.split(','),
+                'ports': _parse_ports(i.ports),
                 'host': i.host
             })
         return {
