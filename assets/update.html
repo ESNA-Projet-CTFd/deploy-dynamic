@@ -14,6 +14,63 @@
     <select id="dockerimage_select" name="docker_image" class="form-control" required></select>
 </div>
 {% endblock %}
+
+{% block value %}
+<div class="form-group">
+    <label for="value">Current Value<br>
+        <small class="form-text text-muted">
+            This is how many points the challenge is worth right now.
+        </small>
+    </label>
+    <input type="number" class="form-control chal-value" name="value" value="{{ challenge.value }}" disabled>
+</div>
+
+<div class="form-group">
+    <label for="initial">Initial Value<br>
+        <small class="form-text text-muted">
+            This is how many points the challenge was worth initially.
+        </small>
+    </label>
+    <input type="number" class="form-control chal-initial" name="initial" value="{{ challenge.initial }}" required>
+</div>
+
+<div class="form-group">
+    <label for="function">Decay Function<br>
+        <small class="form-text text-muted">
+            <ul>
+                <li>Linear: <code>Initial - (Decay * SolveCount)</code></li>
+                <li>Logarithmic: <code>(((Minimum - Initial) / (Decay^2)) * (SolveCount^2)) + Initial</code></li>
+            </ul>
+        </small>
+    </label>
+    <select name="function" class="custom-select">
+        <option value="logarithmic" {% if challenge.function == "logarithmic" %}selected{% endif %}>Logarithmic</option>
+        <option value="linear" {% if challenge.function == "linear" %}selected{% endif %}>Linear</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="decay">Decay<br>
+        <small class="form-text text-muted">
+            <ul>
+                <li>Linear: Points deducted per solve.</li>
+                <li>Logarithmic: Number of solves before reaching the minimum value.</li>
+            </ul>
+        </small>
+    </label>
+    <input type="number" class="form-control chal-decay" min="1" name="decay" value="{{ challenge.decay }}" required>
+</div>
+
+<div class="form-group">
+    <label for="minimum">Minimum Value<br>
+        <small class="form-text text-muted">
+            The lowest value this challenge can reach.
+        </small>
+    </label>
+    <input type="number" class="form-control chal-minimum" name="minimum" value="{{ challenge.minimum }}" required>
+</div>
+{% endblock %}
+
 {% block footer %}
 <script>
 var DOCKER_IMAGE = '{{ challenge.docker_image }}';

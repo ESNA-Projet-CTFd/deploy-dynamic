@@ -481,6 +481,64 @@ def delete_container(config, instance_id):
     return True
 
 
+class DockerChallenge(Challenges):
+    __mapper_args__ = {'polymorphic_identity': 'docker'}
+    id = db.Column(None, db.ForeignKey('challenges.id'), primary_key=True)
+    docker_image = db.Column(db.String(128), index=True)
+    initial = db.Column(db.Integer, default=0)
+    minimum = db.Column(db.Integer, default=0)
+    decay = db.Column(db.Integer, default=0)
+    function = db.Column(db.String(32), default='logarithmic')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(**kwargs)
+        try:
+            self.value = int(kwargs['initial'])
+        except (KeyError, TypeError, ValueError):
+            pass
+
+
+def _docker_decay_linear(challenge):
+    import math
+    from CTFd.models import Solves
+    from CTFd.utils.modes import get_model
+    Model = get_model()
+    solve_count = (
+        Solves.query.join(Model, Solves.account_id == Model.id)
+        .filter(Solves.challenge_id == challenge.id, Model.hidden == False, Model.banned == False)
+        .count()
+    )
+    if solve_count != 0:
+        solve_count -= 1
+    value = math.ceil(challenge.initial - (challenge.decay * solve_count))
+    return max(value, challenge.minimum)
+
+
+def _docker_decay_logarithmic(challenge):
+    import math
+    from CTFd.models import Solves
+    from CTFd.utils.modes import get_model
+    Model = get_model()
+    solve_count = (
+        Solves.query.join(Model, Solves.account_id == Model.id)
+        .filter(Solves.challenge_id == challenge.id, Model.hidden == False, Model.banned == False)
+        .count()
+    )
+    if solve_count != 0:
+        solve_count -= 1
+    decay = challenge.decay if challenge.decay != 0 else 1
+    value = math.ceil(
+        ((challenge.minimum - challenge.initial) / (decay ** 2)) * (solve_count ** 2) + challenge.initial
+    )
+    return max(value, challenge.minimum)
+
+
+_DOCKER_DECAY_FUNCTIONS = {
+    'linear': _docker_decay_linear,
+    'logarithmic': _docker_decay_logarithmic,
+}
+
+
 class DockerChallengeType(BaseChallenge):
     id = "docker"
     name = "docker"
@@ -498,31 +556,26 @@ class DockerChallengeType(BaseChallenge):
     blueprint = Blueprint('deploy-dynamic', __name__, template_folder='templates', static_folder='assets')
 
     @staticmethod
-    def update(challenge, request):
-        """
-		This method is used to update the information associated with a challenge. This should be kept strictly to the
-		Challenges table and any child tables.
-
-		:param challenge:
-		:param request:
-		:return:
-		"""
-        data = request.form or request.get_json()
-        for attr, value in data.items():
-            setattr(challenge, attr, value)
-
+    def calculate_value(challenge):
+        f = _DOCKER_DECAY_FUNCTIONS.get(challenge.function or 'logarithmic', _docker_decay_logarithmic)
+        challenge.value = f(challenge)
         db.session.commit()
         return challenge
 
     @staticmethod
-    def delete(challenge):
-        """
-		This method is used to delete the resources used by a challenge.
-		NOTE: Will need to kill all containers here
+    def update(challenge, request):
+        data = request.form or request.get_json()
+        for attr, value in data.items():
+            if attr in ('initial', 'minimum', 'decay'):
+                try:
+                    value = float(value)
+                except (ValueError, TypeError):
+                    pass
+            setattr(challenge, attr, value)
+        return DockerChallengeType.calculate_value(challenge)
 
-		:param challenge:
-		:return:
-		"""
+    @staticmethod
+    def delete(challenge):
         Fails.query.filter_by(challenge_id=challenge.id).delete()
         Solves.query.filter_by(challenge_id=challenge.id).delete()
         Flags.query.filter_by(challenge_id=challenge.id).delete()
@@ -538,18 +591,16 @@ class DockerChallengeType(BaseChallenge):
 
     @staticmethod
     def read(challenge):
-        """
-		This method is in used to access the data of a challenge in a format processable by the front end.
-
-		:param challenge:
-		:return: Challenge object, data dictionary to be returned to the user
-		"""
         challenge = DockerChallenge.query.filter_by(id=challenge.id).first()
         data = {
             'id': challenge.id,
             'name': challenge.name,
             'value': challenge.value,
             'docker_image': challenge.docker_image,
+            'initial': challenge.initial,
+            'decay': challenge.decay,
+            'minimum': challenge.minimum,
+            'function': challenge.function,
             'description': challenge.description,
             'category': challenge.category,
             'state': challenge.state,
@@ -566,12 +617,6 @@ class DockerChallengeType(BaseChallenge):
 
     @staticmethod
     def create(request):
-        """
-		This method is used to process the challenge creation request.
-
-		:param request:
-		:return:
-		"""
         data = request.form or request.get_json()
         challenge = DockerChallenge(**data)
         db.session.add(challenge)
@@ -580,19 +625,7 @@ class DockerChallengeType(BaseChallenge):
 
     @staticmethod
     def attempt(challenge, request):
-        """
-		This method is used to check whether a given input is right or wrong. It does not make any changes and should
-		return a boolean for correctness and a string to be shown to the user. It is also in charge of parsing the
-		user's input from the request itself.
-
-		:param challenge: The Challenge object from the database
-		:param request: The request the user submitted
-		:return: (boolean, string)
-		"""
-
         data = request.form or request.get_json()
-        print(request.get_json())
-        print(data)
         submission = data["submission"].strip()
         flags = Flags.query.filter_by(challenge_id=challenge.id).all()
         for flag in flags:
@@ -602,14 +635,6 @@ class DockerChallengeType(BaseChallenge):
 
     @staticmethod
     def solve(user, team, challenge, request):
-        """
-		This method is used to insert Solves into the database in order to mark a challenge as solved.
-
-		:param team: The Team object from the database
-		:param chal: The Challenge object from the database
-		:param request: The request the user submitted
-		:return:
-		"""
         data = request.form or request.get_json()
         submission = data["submission"].strip()
         try:
@@ -621,7 +646,7 @@ class DockerChallengeType(BaseChallenge):
                     docker_image=challenge.docker_image).filter_by(user_id=user.id).first()
             delete_container(get_docker_by_host(docker_containers.host), docker_containers.instance_id)
             DockerChallengeTracker.query.filter_by(instance_id=docker_containers.instance_id).delete()
-        except:
+        except Exception:
             pass
         solve = Solves(
             user_id=user.id,
@@ -632,19 +657,10 @@ class DockerChallengeType(BaseChallenge):
         )
         db.session.add(solve)
         db.session.commit()
-        # trying if this solces the detached instance error...
-        #db.session.close()
+        DockerChallengeType.calculate_value(challenge)
 
     @staticmethod
     def fail(user, team, challenge, request):
-        """
-		This method is used to insert Fails into the database in order to mark an answer incorrect.
-
-		:param team: The Team object from the database
-		:param chal: The Challenge object from the database
-		:param request: The request the user submitted
-		:return:
-		"""
         data = request.form or request.get_json()
         submission = data["submission"].strip()
         wrong = Fails(
@@ -656,13 +672,6 @@ class DockerChallengeType(BaseChallenge):
         )
         db.session.add(wrong)
         db.session.commit()
-        #db.session.close()
-
-
-class DockerChallenge(Challenges):
-    __mapper_args__ = {'polymorphic_identity': 'docker'}
-    id = db.Column(None, db.ForeignKey('challenges.id'), primary_key=True)
-    docker_image = db.Column(db.String(128), index=True)
 
 
 # API
@@ -848,6 +857,16 @@ def load(app):
                 for col in ('ca_cert', 'client_cert', 'client_key'):
                     conn.execute(db.text(f"DROP INDEX IF EXISTS ix_docker_config_{col}"))
                     conn.execute(db.text(f"ALTER TABLE docker_config ALTER COLUMN {col} TYPE TEXT"))
+                # Add dynamic scoring columns to docker_challenges if they don't exist yet
+                for col, coltype, default in (
+                    ('initial', 'INTEGER', '0'),
+                    ('minimum', 'INTEGER', '0'),
+                    ('decay', 'INTEGER', '0'),
+                    ('function', 'VARCHAR(32)', "'logarithmic'"),
+                ):
+                    conn.execute(db.text(
+                        f"ALTER TABLE docker_challenges ADD COLUMN IF NOT EXISTS {col} {coltype} DEFAULT {default}"
+                    ))
         elif dialect in ('mysql', 'mariadb'):
             with app.db.engine.begin() as conn:
                 for col in ('ca_cert', 'client_cert', 'client_key'):
@@ -856,7 +875,34 @@ def load(app):
                     except Exception:
                         pass
                     conn.execute(db.text(f"ALTER TABLE docker_config MODIFY {col} TEXT"))
-        # SQLite VARCHAR doesn't enforce length, no migration needed.
+                # Add dynamic scoring columns if they don't exist yet
+                result = conn.execute(db.text("SHOW COLUMNS FROM docker_challenges"))
+                existing_cols = {row[0] for row in result}
+                for col, coltype, default in (
+                    ('initial', 'INTEGER', '0'),
+                    ('minimum', 'INTEGER', '0'),
+                    ('decay', 'INTEGER', '0'),
+                    ('function', 'VARCHAR(32)', "'logarithmic'"),
+                ):
+                    if col not in existing_cols:
+                        conn.execute(db.text(
+                            f"ALTER TABLE docker_challenges ADD COLUMN {col} {coltype} NOT NULL DEFAULT {default}"
+                        ))
+        else:
+            # SQLite: try adding each column, ignore error if already present
+            with app.db.engine.begin() as conn:
+                for col, coltype, default in (
+                    ('initial', 'INTEGER', '0'),
+                    ('minimum', 'INTEGER', '0'),
+                    ('decay', 'INTEGER', '0'),
+                    ('function', 'VARCHAR(32)', "'logarithmic'"),
+                ):
+                    try:
+                        conn.execute(db.text(
+                            f"ALTER TABLE docker_challenges ADD COLUMN {col} {coltype} DEFAULT {default}"
+                        ))
+                    except Exception:
+                        pass
     except Exception:
         traceback.print_exc()
     CHALLENGE_CLASSES['docker'] = DockerChallengeType
