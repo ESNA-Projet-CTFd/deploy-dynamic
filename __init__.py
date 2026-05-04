@@ -282,17 +282,17 @@ def define_docker_admin(app):
 
             b = DockerConfig.query.filter_by(id=int(server_id)).first() if server_id else DockerConfig()
             try:
-                ca_cert = request.files['ca_cert'].stream.read()
+                ca_cert = request.files['ca_cert'].stream.read().decode('utf-8')
             except:
-                ca_cert = b""
+                ca_cert = ""
             try:
-                client_cert = request.files['client_cert'].stream.read()
+                client_cert = request.files['client_cert'].stream.read().decode('utf-8')
             except:
-                client_cert = b""
+                client_cert = ""
             try:
-                client_key = request.files['client_key'].stream.read()
+                client_key = request.files['client_key'].stream.read().decode('utf-8')
             except:
-                client_key = b""
+                client_key = ""
             if ca_cert:
                 b.ca_cert = ca_cert
             if client_cert:
