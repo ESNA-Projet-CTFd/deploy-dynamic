@@ -325,13 +325,17 @@ def define_docker_admin(app):
         if edit_id:
             edit_server = DockerConfig.query.filter_by(id=int(edit_id)).first()
             if edit_server:
+                connection_ok = True
                 try:
                     repos = get_repositories(edit_server)
                 except Exception:
                     traceback.print_exc()
                     repos = []
-                if len(repos) == 0:
+                    connection_ok = False
+                if not connection_ok:
                     form.repositories.choices = [("ERROR", "Failed to Connect to Docker")]
+                elif len(repos) == 0:
+                    form.repositories.choices = [("EMPTY", "No images on the Docker host yet")]
                 else:
                     form.repositories.choices = [(d, d) for d in repos]
                 selected_repos = edit_server.repositories.split(',') if edit_server.repositories else []
