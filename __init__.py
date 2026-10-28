@@ -5,7 +5,7 @@ from CTFd.plugins.challenges import BaseChallenge, CHALLENGE_CLASSES, get_chal_c
 from CTFd.plugins.flags import get_flag_class
 from CTFd.utils.user import get_ip
 from CTFd.utils.uploads import delete_file
-from CTFd.plugins import register_plugin_assets_directory, bypass_csrf_protection
+from CTFd.plugins import register_plugin_assets_directory, register_plugin_stylesheet, bypass_csrf_protection
 from CTFd.schemas.tags import TagSchema
 from CTFd.models import db, ma, Challenges, Teams, Users, Solves, Fails, Flags, Files, Hints, Tags, ChallengeFiles
 from CTFd.utils.decorators import admins_only, authed_only, during_ctf_time_only, require_verified_emails
@@ -970,6 +970,8 @@ def load(app):
     def datetimeformat(value, format='%Y-%m-%d %H:%M:%S'):
         return datetime.fromtimestamp(value).strftime(format)
     register_plugin_assets_directory(app, base_path='/plugins/deploy-dynamic/assets')
+    # Styles par défaut de l'interface joueur, chargés sur toutes les pages (après le CSS du thème)
+    register_plugin_stylesheet('/plugins/deploy-dynamic/assets/view.css')
     define_docker_admin(app)
     define_docker_status(app)
     CTFd_API_v1.add_namespace(docker_namespace, '/docker')

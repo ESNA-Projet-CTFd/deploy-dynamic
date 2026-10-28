@@ -1,119 +1,15 @@
 {% extends "challenge.html" %}
+{#
+  Seul le bloc de description est étendu : le champ de flag et le bouton
+  restent ceux du thème. L'instance est rendue par view.js dans
+  #docker_container, stylée par view.css et par le thème actif.
+#}
 {% block description %}
 {{ challenge.html }}
-<style>
-.docker-card {
-    border: 1px solid var(--bs-border-color);
-    border-radius: 0.5rem;
-    overflow: hidden;
-    margin: 1rem 0;
-}
-.docker-card-header {
-    background: linear-gradient(135deg, #1a1a2e, #16213e);
-    color: #e0e0e0;
-    padding: 0.6rem 1rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-[data-bs-theme="dark"] .docker-card-header {
-    background: linear-gradient(135deg, #2a2a50, #1e3060);
-}
-.docker-status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #28a745;
-    flex-shrink: 0;
-    animation: docker-pulse 1.8s infinite;
-}
-@keyframes docker-pulse {
-    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(40,167,69,0.4); }
-    50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(40,167,69,0); }
-}
-.docker-card-body {
-    padding: 0.9rem 1rem;
-    background: var(--bs-body-bg);
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-}
-.docker-links {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    margin-bottom: 0.25rem;
-}
-.docker-link {
-    font-family: 'Courier New', monospace;
-    font-size: 0.88rem;
-    background: var(--bs-secondary-bg);
-    border: 1px solid var(--bs-border-color);
-    padding: 0.4rem 0.75rem;
-    border-radius: 0.3rem;
-    color: var(--bs-link-color);
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    text-decoration: none;
-    transition: background 0.15s, color 0.15s;
-}
-.docker-link:hover {
-    background: var(--bs-tertiary-bg);
-    color: var(--bs-link-hover-color);
-    text-decoration: none;
-}
-.docker-link-copy {
-    cursor: pointer;
-    color: var(--bs-body-color);
-    user-select: all;
-}
-.docker-link-copy:hover {
-    color: var(--bs-link-color);
-}
-.docker-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-}
-.docker-countdown-inline {
-    font-size: 0.78rem;
-    font-weight: normal;
-    opacity: 0.75;
-    margin-left: 0.25rem;
-}
-.docker-start-wrap {
-    text-align: center;
-    padding: 0.5rem 0;
-}
-.docker-start-btn {
-    padding: 0.5rem 1.5rem;
-    font-size: 0.95rem;
-    border-radius: 0.4rem;
-    transition: transform 0.15s, box-shadow 0.15s;
-}
-.docker-start-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-}
-</style>
-<div class='mb-3' id='docker_container' name='{{ challenge.docker_image | safe }}'>
-    <div class="text-center py-3 text-muted">
-        <i class="fas fa-circle-notch fa-spin"></i>
-    </div>
+<div id="docker_container" class="ddeploy" data-challenge-id="{{ challenge.id }}">
+  <div class="ddeploy-loading">
+    <i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i>
+    <span>Chargement de l'instance…</span>
+  </div>
 </div>
-{% endblock %}
-{% block input %}
-<input id="challenge-id" class="challenge-id" type="hidden" value="{{ challenge.id }}">
-<input id="challenge-input" class="challenge-input form-control" type="text" name="submission" @keyup.enter="submitChallenge()" placeholder="Flag" x-model="submission">
-{% endblock %}
-{% block submit %}
-<button id="challenge-submit" class="challenge-submit btn btn-outline-secondary w-100 h-100" type="submit" @click.debounce.500ms="submitChallenge()">
-    Submit
-</button>
 {% endblock %}

@@ -1,0 +1,206 @@
+/*
+ * deploy-dynamic : interface joueur des instances (fenêtre d'un défi).
+ *
+ * Styles par défaut, basés sur les variables Bootstrap du thème actif.
+ * Les sélecteurs sont dans :where() (spécificité nulle) : un thème peut les
+ * surcharger sans se battre avec ce fichier, chargé après le sien. Seules les
+ * remises à zéro de fin de fichier ont une spécificité de classe.
+ *
+ * Pour un thème, deux leviers :
+ *   - les variables --ddeploy-* posées sur .ddeploy ;
+ *   - des règles sur les classes ci-dessous.
+ *
+ * Structure produite par view.js dans #docker_container.ddeploy :
+ *   .ddeploy-loading                      chargement / démarrage / arrêt
+ *   .ddeploy-idle > .ddeploy-idle-text + .ddeploy-btn-start
+ *   .ddeploy-card[data-state="running"]
+ *     .ddeploy-card-header > .ddeploy-status-dot + .ddeploy-title + .ddeploy-meta
+ *     .ddeploy-card-body
+ *       ul.ddeploy-links > li.ddeploy-link[data-kind="http|https|ssh|tcp|udp"]
+ *         .ddeploy-link-icon + .ddeploy-link-kind + .ddeploy-link-text + button.ddeploy-copy(.is-copied)
+ *       .ddeploy-actions > .ddeploy-btn-restart + .ddeploy-btn-stop (+ .ddeploy-countdown)
+ *       .ddeploy-confirm > .ddeploy-confirm-text + boutons
+ *   .alert.ddeploy-error > .ddeploy-error-text + .ddeploy-btn-retry
+ */
+
+:where(.ddeploy) {
+  --ddeploy-bg: var(--bs-tertiary-bg);
+  --ddeploy-header-bg: var(--bs-secondary-bg);
+  --ddeploy-header-color: var(--bs-body-color);
+  --ddeploy-border: var(--bs-border-color);
+  --ddeploy-radius: var(--bs-border-radius-lg, 0.5rem);
+  --ddeploy-link-bg: var(--bs-body-bg);
+  --ddeploy-mono: var(--bs-font-monospace, monospace);
+  --ddeploy-muted: var(--bs-secondary-color);
+  --ddeploy-online: #28a745;
+  container-type: inline-size;
+  margin: 1rem 0;
+}
+
+:where(.ddeploy-loading) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1rem;
+  color: var(--ddeploy-muted);
+}
+
+:where(.ddeploy-idle) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.25rem 1rem;
+  border: 1px dashed var(--ddeploy-border);
+  border-radius: var(--ddeploy-radius);
+  text-align: center;
+}
+
+:where(.ddeploy-idle-text) {
+  color: var(--ddeploy-muted);
+}
+
+:where(.ddeploy-card) {
+  overflow: hidden;
+  background: var(--ddeploy-bg);
+  border: 1px solid var(--ddeploy-border);
+  border-radius: var(--ddeploy-radius);
+}
+
+:where(.ddeploy-card-header) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--ddeploy-header-bg);
+  color: var(--ddeploy-header-color);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+:where(.ddeploy-status-dot) {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  background: var(--ddeploy-online);
+  border-radius: 50%;
+  animation: ddeploy-pulse 1.8s infinite;
+}
+
+:where(.ddeploy-meta) {
+  margin-left: auto;
+  color: var(--ddeploy-muted);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:where(.ddeploy-card-body) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+}
+
+:where(.ddeploy-links) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+:where(.ddeploy-link) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.75rem;
+  background: var(--ddeploy-link-bg);
+  border: 1px solid var(--ddeploy-border);
+  border-radius: 0.3rem;
+  font-family: var(--ddeploy-mono);
+  font-size: 0.88rem;
+}
+
+:where(.ddeploy-link-kind) {
+  color: var(--ddeploy-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+:where(.ddeploy-link-text) {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:where(.ddeploy-copy) {
+  flex: none;
+  padding: 0.2rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--ddeploy-border);
+  border-radius: 0.25rem;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+:where(.ddeploy-actions),
+:where(.ddeploy-confirm) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+:where(.ddeploy-confirm-text) {
+  font-weight: 600;
+}
+
+:where(.ddeploy-error-text) {
+  white-space: pre-line;
+}
+
+/* Remises à zéro face au reboot de Bootstrap (ul, p) : ses sélecteurs d'éléments
+   l'emporteraient sur :where(), d'où une spécificité de classe ici. */
+.ddeploy-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ddeploy-idle-text,
+.ddeploy-confirm-text {
+  margin: 0;
+}
+
+.ddeploy-error-text {
+  margin: 0 0 0.75rem;
+}
+
+:where(.ddeploy-countdown) {
+  margin-left: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* Carte étroite (fenêtre « sm » du core, mobile) : l'icône suffit à typer le lien */
+@container (max-width: 440px) {
+  :where(.ddeploy-link-kind) {
+    display: none;
+  }
+}
+
+@keyframes ddeploy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.ddeploy-status-dot) {
+    animation: none;
+  }
+}
