@@ -444,7 +444,10 @@ def create_container(config, image, team, portbl, allowed_ip=None):
     port_bindings = {}
     for port in needed_ports:
         while True:
-            assigned = random.choice(range(30000, 60000))
+            # Plage de ports ouverte par l'école vers challenges.esna.re (10.0.50.29) :
+            # 40000-60000 inclus. Ne jamais sortir de cette plage, sinon l'instance
+            # est injoignable (bloquée par le pare-feu de l'école).
+            assigned = random.choice(range(40000, 60001))
             if assigned not in portbl:
                 portbl.append(assigned)
                 port_bindings[port] = assigned
